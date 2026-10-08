@@ -5,9 +5,9 @@ namespace Wallet.Infrastructure.Persistence;
 
 public class WalletDbContext(DbContextOptions<WalletDbContext> options) : DbContext(options)
 {
-    public DbSet<Account> Accounts => Set<Account>();
-    public DbSet<LedgerTransaction> LedgerTransactions => Set<LedgerTransaction>();
-    public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
+    public DbSet<Wallet.Domain.Wallet> Wallets => Set<Wallet.Domain.Wallet>();
+    public DbSet<Wallet.Domain.Transfer> Transfers => Set<Wallet.Domain.Transfer>();
+    public DbSet<Wallet.Domain.LedgerEntry> LedgerEntries => Set<Wallet.Domain.LedgerEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
         => modelBuilder.ApplyConfigurationsFromAssembly(typeof(WalletDbContext).Assembly);

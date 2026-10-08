@@ -1,24 +1,25 @@
 namespace Wallet.Domain;
 
-public enum EntryDirection { Debit = 1, Credit = 2 }
-
-/// Append-only. Never update or delete; correct mistakes with a reversing transaction.
 public class LedgerEntry
 {
-    private LedgerEntry() { } // EF Core
+    private LedgerEntry() { }
 
-    internal LedgerEntry(Guid transactionId, Guid accountId, EntryDirection direction, long amount)
+    internal LedgerEntry(Guid transferId, Guid walletId, long amount, long balanceAfter)
     {
-        Id = Guid.NewGuid();
-        TransactionId = transactionId;
-        AccountId = accountId;
-        Direction = direction;
+        TransferId = transferId;
+        WalletId = walletId;
         Amount = amount;
+        BalanceAfter = balanceAfter;
     }
 
-    public Guid Id { get; private set; }
-    public Guid TransactionId { get; private set; }
-    public Guid AccountId { get; private set; }
-    public EntryDirection Direction { get; private set; }
-    public long Amount { get; private set; } // minor units, always positive
+    public long Id { get; private set; }
+    public Guid TransferId { get; private set; }
+    public Guid WalletId { get; private set; }
+    public long Amount { get; private set; }
+    public long BalanceAfter { get; private set; }
+
+    internal void SetBalanceAfter(long balanceAfter)
+    {
+        BalanceAfter = balanceAfter;
+    }
 }

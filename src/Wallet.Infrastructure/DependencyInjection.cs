@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Wallet.Infrastructure.Accounts;
 using Wallet.Infrastructure.Persistence;
+using Wallet.Infrastructure.Transfers;
 
 namespace Wallet.Infrastructure;
 
@@ -17,7 +18,7 @@ public static class DependencyInjection
         services.AddDbContext<WalletDbContext>(o => o.UseNpgsql(connectionString));
 
         services.AddScoped<IAccountService, AccountService>();
-        // Later: outbox, idempotency store, RabbitMQ publisher
+        services.AddScoped<ITransferService, TransferService>();
 
         return services;
     }
