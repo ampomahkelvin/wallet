@@ -1,0 +1,5 @@
+namespace Wallet.Api.Contracts;
+
+public record OpenWalletRequest(string OwnerId, string Currency);
+
+public record WalletResponse(Guid Id, string OwnerId, string Currency, long Balance);

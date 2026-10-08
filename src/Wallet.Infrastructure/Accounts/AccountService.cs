@@ -6,14 +6,18 @@ namespace Wallet.Infrastructure.Accounts;
 
 public class AccountService(WalletDbContext db) : IAccountService
 {
-    public async Task<Account> OpenAsync(string ownerId, string currency, CancellationToken ct)
+    public async Task<Wallet.Domain.Wallet> OpenAsync(string ownerId, string currency, CancellationToken ct)
     {
-        var account = Account.Open(ownerId, currency, AccountType.UserWallet);
-        db.Accounts.Add(account);
+        var wallet = Wallet.Domain.Wallet.CreateUser(ownerId, currency);
+        db.Wallets.Add(wallet);
         await db.SaveChangesAsync(ct);
-        return account;
+        return wallet;
     }
 
-    public Task<Account?> GetAsync(Guid id, CancellationToken ct)
-        => db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
+    public Task<Wallet.Domain.Wallet?> GetAsync(Guid id, CancellationToken ct)
+        => db.Wallets.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct);
+
+    public Task<Wallet.Domain.Wallet?> GetSystemWalletAsync(string currency, CancellationToken ct)
+        => db.Wallets.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Kind == WalletKind.System && w.Currency == currency, ct);
 }
