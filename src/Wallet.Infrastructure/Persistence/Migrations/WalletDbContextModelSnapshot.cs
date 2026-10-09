@@ -22,6 +22,39 @@ namespace Wallet.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Wallet.Domain.IdempotencyKey", b =>
+                {
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ResponseBody")
+                        .HasColumnType("text");
+
+                    b.Property<short?>("ResponseStatus")
+                        .HasColumnType("smallint");
+
+                    b.HasKey("ClientId", "Key");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("idempotency_keys", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_idempotency_response_complete", " (\"ResponseStatus\" IS NULL) = (\"ResponseBody\" IS NULL) ");
+                        });
+                });
+
             modelBuilder.Entity("Wallet.Domain.LedgerEntry", b =>
                 {
                     b.Property<long>("Id")

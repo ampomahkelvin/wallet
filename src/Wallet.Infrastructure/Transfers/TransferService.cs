@@ -70,6 +70,45 @@ public class TransferService(WalletDbContext db) : ITransferService
             .FirstOrDefaultAsync(t => t.Id == id, ct);
     }
 
+    public async Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        var original = await db.Transfers
+            .FromSqlInterpolated($@"
+                SELECT id, type, source_wallet_id, destination_wallet_id, currency, amount, reverses_transfer_id, created_at
+                FROM transfers
+                WHERE id = {transferId}
+                FOR UPDATE")
+            .FirstOrDefaultAsync(ct);
+
+        if (original is null)
+            throw new DomainException("Transfer not found.");
+
+        if (original.Type == TransferType.Reversal)
+            throw new DomainException("A reversal cannot be reversed.");
+
+        var alreadyReversed = await db.Transfers
+            .AnyAsync(t => t.ReversesTransferId == transferId, ct);
+
+        if (alreadyReversed)
+            throw new DomainException("Transfer has already been reversed.");
+
+        var reversal = await ExecuteAsync(
+            TransferType.Reversal,
+            original.DestinationWalletId,
+            original.SourceWalletId,
+            original.Currency,
+            original.Amount,
+            ct);
+
+        reversal.ReversesTransferId = transferId;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return reversal;
+    }
+
     public async Task<IReadOnlyList<LedgerEntry>> GetWalletEntriesAsync(
         Guid walletId,
         long? before = null,

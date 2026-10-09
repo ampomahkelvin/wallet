@@ -14,6 +14,8 @@ public interface ITransferService
 
     Task<Transfer?> GetAsync(Guid id, CancellationToken ct = default);
 
+    Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default);
+
     Task<IReadOnlyList<LedgerEntry>> GetWalletEntriesAsync(
         Guid walletId,
         long? before = null,
