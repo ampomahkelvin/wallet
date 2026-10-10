@@ -16,7 +16,7 @@ public class Transfer
     public Guid DestinationWalletId { get; private set; }
     public string Currency { get; private set; } = default!;
     public long Amount { get; private set; }
-    public Guid? ReversesTransferId { get; private set; }
+    public Guid? ReversesTransferId { get; set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public IReadOnlyList<LedgerEntry> Entries => _entries;
 

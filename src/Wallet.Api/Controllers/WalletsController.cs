@@ -2,21 +2,35 @@ using Microsoft.AspNetCore.Mvc;
 using Wallet.Api.Contracts;
 using Wallet.Domain;
 using Wallet.Infrastructure.Accounts;
+using Wallet.Infrastructure.Idempotency;
 using Wallet.Infrastructure.Transfers;
 
 namespace Wallet.Api.Controllers;
 
 [ApiController]
 [Route("api/wallets")]
-public class WalletsController(IAccountService wallets, ITransferService transfers) : ControllerBase
+public class WalletsController(
+    IAccountService wallets,
+    ITransferService transfers,
+    IIdempotencyService idempotency) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<WalletResponse>> Open(OpenWalletRequest request, CancellationToken ct)
     {
         try
         {
-            var w = await wallets.OpenAsync(request.OwnerId, request.Currency, ct);
-            return CreatedAtAction(nameof(Get), new { id = w.Id }, ToWalletResponse(w));
+            var clientId = GetClientId();
+            var key = GetIdempotencyKey();
+            var hash = RequestHasher.Hash("POST", "/api/wallets", request);
+
+            var (wallet, replayed) = await idempotency.HandleAsync(
+                clientId, key, hash,
+                async () => await wallets.OpenAsync(request.OwnerId, request.Currency, ct),
+                ct);
+
+            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+
+            return CreatedAtAction(nameof(Get), new { id = wallet.Id }, ToWalletResponse(wallet));
         }
         catch (DomainException ex)
         {
@@ -36,19 +50,31 @@ public class WalletsController(IAccountService wallets, ITransferService transfe
     {
         try
         {
-            var wallet = await wallets.GetAsync(id, ct)
-                ?? throw new DomainException("Wallet not found.");
+            var clientId = GetClientId();
+            var key = GetIdempotencyKey();
+            var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/deposits", request);
 
-            var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
-                ?? throw new DomainException("System wallet not found.");
+            var (transfer, replayed) = await idempotency.HandleAsync(
+                clientId, key, hash,
+                async () =>
+                {
+                    var wallet = await wallets.GetAsync(id, ct)
+                        ?? throw new DomainException("Wallet not found.");
 
-            var transfer = await transfers.ExecuteAsync(
-                TransferType.Deposit,
-                systemWallet.Id,
-                wallet.Id,
-                wallet.Currency,
-                request.Amount,
+                    var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
+                        ?? throw new DomainException("System wallet not found.");
+
+                    return await transfers.ExecuteAsync(
+                        TransferType.Deposit,
+                        systemWallet.Id,
+                        wallet.Id,
+                        wallet.Currency,
+                        request.Amount,
+                        ct);
+                },
                 ct);
+
+            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
 
             return CreatedAtAction("Get", "Transfers", new { id = transfer.Id }, ToTransferResponse(transfer));
         }
@@ -63,19 +89,31 @@ public class WalletsController(IAccountService wallets, ITransferService transfe
     {
         try
         {
-            var wallet = await wallets.GetAsync(id, ct)
-                ?? throw new DomainException("Wallet not found.");
+            var clientId = GetClientId();
+            var key = GetIdempotencyKey();
+            var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/withdrawals", request);
 
-            var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
-                ?? throw new DomainException("System wallet not found.");
+            var (transfer, replayed) = await idempotency.HandleAsync(
+                clientId, key, hash,
+                async () =>
+                {
+                    var wallet = await wallets.GetAsync(id, ct)
+                        ?? throw new DomainException("Wallet not found.");
 
-            var transfer = await transfers.ExecuteAsync(
-                TransferType.Withdrawal,
-                wallet.Id,
-                systemWallet.Id,
-                wallet.Currency,
-                request.Amount,
+                    var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
+                        ?? throw new DomainException("System wallet not found.");
+
+                    return await transfers.ExecuteAsync(
+                        TransferType.Withdrawal,
+                        wallet.Id,
+                        systemWallet.Id,
+                        wallet.Currency,
+                        request.Amount,
+                        ct);
+                },
                 ct);
+
+            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
 
             return CreatedAtAction("Get", "Transfers", new { id = transfer.Id }, ToTransferResponse(transfer));
         }
@@ -105,6 +143,13 @@ public class WalletsController(IAccountService wallets, ITransferService transfe
 
         return response;
     }
+
+    private string GetClientId() =>
+        Request.Headers["X-Client-Id"].FirstOrDefault() ?? "default";
+
+    private string GetIdempotencyKey() =>
+        Request.Headers["Idempotency-Key"].FirstOrDefault()
+        ?? throw new DomainException("Idempotency-Key header is required.");
 
     private static WalletResponse ToWalletResponse(Wallet.Domain.Wallet w) =>
         new(w.Id, w.OwnerId ?? "", w.Currency, w.Balance);
