@@ -10,6 +10,7 @@ public interface ITransferService
         Guid destinationWalletId,
         string currency,
         long amount,
+        Guid? reversesTransferId = null,
         CancellationToken ct = default);
 
     Task<Transfer?> GetAsync(Guid id, CancellationToken ct = default);

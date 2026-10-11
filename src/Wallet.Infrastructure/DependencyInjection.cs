@@ -16,7 +16,8 @@ public static class DependencyInjection
         var connectionString = config.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is missing.");
 
-        services.AddDbContext<WalletDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddDbContextFactory<WalletDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddScoped<WalletDbContext>(sp => sp.GetRequiredService<IDbContextFactory<WalletDbContext>>().CreateDbContext());
 
         services.AddScoped<IAccountService, AccountService>();
         services.AddScoped<ITransferService, TransferService>();

@@ -4,7 +4,7 @@ using Wallet.Infrastructure.Persistence;
 
 namespace Wallet.Infrastructure.Transfers;
 
-public class TransferService(WalletDbContext db) : ITransferService
+public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) : ITransferService
 {
     public async Task<Transfer> ExecuteAsync(
         TransferType type,
@@ -12,6 +12,7 @@ public class TransferService(WalletDbContext db) : ITransferService
         Guid destinationWalletId,
         string currency,
         long amount,
+        Guid? reversesTransferId = null,
         CancellationToken ct = default)
     {
         if (amount <= 0)
@@ -21,16 +22,17 @@ public class TransferService(WalletDbContext db) : ITransferService
 
         currency = currency.ToUpperInvariant();
 
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         var walletIds = new[] { sourceWalletId, destinationWalletId }.OrderBy(id => id).ToArray();
 
         var wallets = await db.Wallets
             .FromSqlInterpolated($@"
-                SELECT id, kind, owner_id, currency, balance, created_at
+                SELECT ""Id"", ""Kind"", ""OwnerId"", ""Currency"", ""Balance"", ""CreatedAt""
                 FROM wallets
-                WHERE id = ANY({walletIds})
-                ORDER BY id
+                WHERE ""Id"" = ANY({walletIds})
+                ORDER BY ""Id""
                 FOR UPDATE")
             .ToListAsync(ct);
 
@@ -48,7 +50,7 @@ public class TransferService(WalletDbContext db) : ITransferService
         if (source.Kind == WalletKind.User && source.Balance < amount)
             throw new DomainException("Insufficient funds.");
 
-        var transfer = Transfer.Create(type, sourceWalletId, destinationWalletId, currency, amount);
+        var transfer = Transfer.Create(type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId);
 
         source.ApplyDelta(-amount);
         dest.ApplyDelta(amount);
@@ -64,6 +66,7 @@ public class TransferService(WalletDbContext db) : ITransferService
 
     public async Task<Transfer?> GetAsync(Guid id, CancellationToken ct = default)
     {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
         return await db.Transfers
             .AsNoTracking()
             .Include(t => t.Entries)
@@ -72,15 +75,11 @@ public class TransferService(WalletDbContext db) : ITransferService
 
     public async Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
 
         var original = await db.Transfers
-            .FromSqlInterpolated($@"
-                SELECT id, type, source_wallet_id, destination_wallet_id, currency, amount, reverses_transfer_id, created_at
-                FROM transfers
-                WHERE id = {transferId}
-                FOR UPDATE")
-            .FirstOrDefaultAsync(ct);
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
         if (original is null)
             throw new DomainException("Transfer not found.");
@@ -94,19 +93,14 @@ public class TransferService(WalletDbContext db) : ITransferService
         if (alreadyReversed)
             throw new DomainException("Transfer has already been reversed.");
 
-        var reversal = await ExecuteAsync(
+        return await ExecuteAsync(
             TransferType.Reversal,
             original.DestinationWalletId,
             original.SourceWalletId,
             original.Currency,
             original.Amount,
+            transferId,
             ct);
-
-        reversal.ReversesTransferId = transferId;
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        return reversal;
     }
 
     public async Task<IReadOnlyList<LedgerEntry>> GetWalletEntriesAsync(
@@ -118,6 +112,7 @@ public class TransferService(WalletDbContext db) : ITransferService
         if (limit is < 1 or > 100)
             throw new DomainException("Limit must be between 1 and 100.");
 
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
         var query = db.LedgerEntries
             .AsNoTracking()
             .Where(e => e.WalletId == walletId);
