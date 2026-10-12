@@ -89,6 +89,43 @@ namespace Wallet.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Wallet.Domain.OutboxEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TransferId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Id")
+                        .HasFilter(" \"PublishedAt\" IS NULL ");
+
+                    b.HasIndex("TransferId", "Type")
+                        .IsUnique();
+
+                    b.ToTable("outbox_events", (string)null);
+                });
+
             modelBuilder.Entity("Wallet.Domain.Transfer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -195,6 +232,15 @@ namespace Wallet.Infrastructure.Persistence.Migrations
                     b.HasOne("Wallet.Domain.Wallet", null)
                         .WithMany()
                         .HasForeignKey("WalletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Wallet.Domain.OutboxEvent", b =>
+                {
+                    b.HasOne("Wallet.Domain.Transfer", null)
+                        .WithMany()
+                        .HasForeignKey("TransferId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -56,6 +56,28 @@ public class TransferService(WalletDbContext db) : ITransferService
         transfer.SetEntryBalances(source.Balance, dest.Balance);
 
         db.Transfers.Add(transfer);
+
+        var eventType = type switch
+        {
+            TransferType.Transfer => "transfer.completed",
+            TransferType.Deposit => "deposit.completed",
+            TransferType.Withdrawal => "withdrawal.completed",
+            TransferType.Reversal => "transfer.reversed",
+            _ => throw new DomainException($"Unknown transfer type: {type}")
+        };
+
+        var outboxEvent = OutboxEvent.Create(transfer.Id, eventType, new
+        {
+            transfer.Id,
+            transfer.Type,
+            transfer.SourceWalletId,
+            transfer.DestinationWalletId,
+            transfer.Currency,
+            transfer.Amount,
+            transfer.CreatedAt
+        });
+        db.OutboxEvents.Add(outboxEvent);
+
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
