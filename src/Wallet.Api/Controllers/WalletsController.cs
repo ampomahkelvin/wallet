@@ -70,6 +70,7 @@ public class WalletsController(
                         wallet.Id,
                         wallet.Currency,
                         request.Amount,
+                        null,
                         ct);
                 },
                 ct);
@@ -109,6 +110,7 @@ public class WalletsController(
                         systemWallet.Id,
                         wallet.Currency,
                         request.Amount,
+                        null,
                         ct);
                 },
                 ct);
