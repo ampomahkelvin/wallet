@@ -1,8 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using RabbitMQ.Client;
 using Wallet.Infrastructure.Accounts;
 using Wallet.Infrastructure.Idempotency;
+using Wallet.Infrastructure.Messaging;
 using Wallet.Infrastructure.Persistence;
 using Wallet.Infrastructure.Transfers;
 
@@ -22,6 +25,15 @@ public static class DependencyInjection
         services.AddScoped<IAccountService, AccountService>();
         services.AddScoped<ITransferService, TransferService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
+
+        var rabbitMqHost = config.GetConnectionString("RabbitMQ") ?? "amqp://guest:guest@localhost:5672/";
+        services.AddSingleton<IConnection>(_ =>
+        {
+            var factory = new ConnectionFactory { Uri = new Uri(rabbitMqHost), DispatchConsumersAsync = true };
+            return factory.CreateConnection();
+        });
+        services.Configure<RelayOptions>(config.GetSection("Relay"));
+        services.AddHostedService<RelayService>();
 
         return services;
     }
