@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using Wallet.Infrastructure.Accounts;
 using Wallet.Infrastructure.Idempotency;
@@ -32,8 +33,18 @@ public static class DependencyInjection
             var factory = new ConnectionFactory { Uri = new Uri(rabbitMqHost), DispatchConsumersAsync = true };
             return factory.CreateConnection();
         });
+        services.AddSingleton<EventDispatcher>(sp =>
+        {
+            var dispatcher = new EventDispatcher(sp.GetRequiredService<ILogger<EventDispatcher>>());
+            dispatcher.Register("transfer.completed", _ => Task.CompletedTask);
+            dispatcher.Register("deposit.completed", _ => Task.CompletedTask);
+            dispatcher.Register("withdrawal.completed", _ => Task.CompletedTask);
+            dispatcher.Register("transfer.reversed", _ => Task.CompletedTask);
+            return dispatcher;
+        });
         services.Configure<RelayOptions>(config.GetSection("Relay"));
         services.AddHostedService<RelayService>();
+        services.AddHostedService<ConsumerService>();
 
         return services;
     }

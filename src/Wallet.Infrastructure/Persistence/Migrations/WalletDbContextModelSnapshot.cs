@@ -22,6 +22,23 @@ namespace Wallet.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Wallet.Domain.ConsumerProcessedEvent", b =>
+                {
+                    b.Property<long>("EventId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ConsumerName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("EventId", "ConsumerName");
+
+                    b.ToTable("consumer_processed_events", (string)null);
+                });
+
             modelBuilder.Entity("Wallet.Domain.IdempotencyKey", b =>
                 {
                     b.Property<string>("ClientId")
