@@ -96,10 +96,11 @@ public class RelayTests : IAsyncLifetime
         var transfer = await _service.ExecuteAsync(
             TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
         relay.Initialize();
+        await relay.PollAndPublishAsync(CancellationToken.None);
 
         var published = await WaitForConditionAsync(async () =>
         {
@@ -122,10 +123,11 @@ public class RelayTests : IAsyncLifetime
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.PublishedAt, DateTimeOffset.UtcNow));
         await _db.SaveChangesAsync();
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
         relay.Initialize();
+        await relay.PollAndPublishAsync(CancellationToken.None);
 
         await Task.Delay(500);
 
@@ -143,10 +145,11 @@ public class RelayTests : IAsyncLifetime
         await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
         await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
         relay.Initialize();
+        await relay.PollAndPublishAsync(CancellationToken.None);
 
         var allPublished = await WaitForConditionAsync(async () =>
         {
@@ -179,18 +182,32 @@ public class RelayTests : IAsyncLifetime
     }
 }
 
-public class ScopeFactoryWrapper : IServiceScopeFactory
+public class ScopeFactoryWrapper(string connectionString) : IServiceScopeFactory
 {
-    public IServiceScope CreateScope() => new SimpleScope();
+    public IServiceScope CreateScope() => new SimpleScope(connectionString);
 }
 
 public class SimpleScope : IServiceScope
 {
-    public IServiceProvider ServiceProvider { get; } = new SimpleProvider();
+    public IServiceProvider ServiceProvider { get; }
+    public SimpleScope(string connectionString)
+    {
+        ServiceProvider = new SimpleProvider(connectionString);
+    }
     public void Dispose() { }
 }
 
-public class SimpleProvider : IServiceProvider
+public class SimpleProvider(string connectionString) : IServiceProvider
 {
-    public object? GetService(Type serviceType) => null;
+    public object? GetService(Type serviceType)
+    {
+        if (serviceType == typeof(WalletDbContext))
+        {
+            var options = new DbContextOptionsBuilder<WalletDbContext>()
+                .UseNpgsql(connectionString)
+                .Options;
+            return new WalletDbContext(options);
+        }
+        return null;
+    }
 }

@@ -57,7 +57,7 @@ public class RelayService : BackgroundService
         }
     }
 
-    private async Task PollAndPublishAsync(CancellationToken ct)
+    public async Task PollAndPublishAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
