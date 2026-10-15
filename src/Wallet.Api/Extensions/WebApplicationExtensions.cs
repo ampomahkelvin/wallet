@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Http;
+using Wallet.Api.Middleware;
 using Wallet.Domain;
 using Wallet.Infrastructure;
 using Wallet.Infrastructure.Persistence;
@@ -12,13 +14,19 @@ public static class WebApplicationExtensions
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
-            await app.Services.MigrateDatabaseAsync(); // dev only; run migrations as a deploy step in prod
+            await app.Services.MigrateDatabaseAsync();
         }
 
         await SeedSystemWalletsAsync(app.Services);
 
         app.UseExceptionHandler();
+        app.UseMiddleware<RateLimitingMiddleware>();
         app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+        app.MapGet("/health/deep", async (WalletDbContext db) =>
+        {
+            var dbHealthy = await db.Database.CanConnectAsync();
+            return Results.Ok(new { status = dbHealthy ? "ok" : "degraded", database = dbHealthy ? "up" : "down" });
+        });
         app.MapControllers();
 
         return app;

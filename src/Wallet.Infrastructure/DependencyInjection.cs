@@ -3,11 +3,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using StackExchange.Redis;
 using Wallet.Infrastructure.Accounts;
 using Wallet.Infrastructure.Idempotency;
+using Wallet.Infrastructure.Maintenance;
 using Wallet.Infrastructure.Messaging;
 using Wallet.Infrastructure.Persistence;
+using Wallet.Infrastructure.RateLimiting;
 using Wallet.Infrastructure.Transfers;
 
 namespace Wallet.Infrastructure;
@@ -45,6 +49,21 @@ public static class DependencyInjection
         services.Configure<RelayOptions>(config.GetSection("Relay"));
         services.AddHostedService<RelayService>();
         services.AddHostedService<ConsumerService>();
+
+        var redisHost = config.GetConnectionString("Redis") ?? "localhost:6379";
+        services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisHost));
+
+        services.Configure<RateLimiterOptions>(config.GetSection("RateLimiter"));
+        services.AddSingleton<IRateLimiter>(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<RateLimiterOptions>>().Value;
+            var redis = sp.GetRequiredService<IConnectionMultiplexer>();
+            var logger = sp.GetRequiredService<ILogger<RedisRateLimiter>>();
+            return new RedisRateLimiter(redis, opts.MaxRequests, TimeSpan.FromSeconds(opts.WindowSeconds), logger);
+        });
+
+        services.Configure<MaintenanceOptions>(config.GetSection("Maintenance"));
+        services.AddHostedService<MaintenanceService>();
 
         return services;
     }

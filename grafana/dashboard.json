@@ -1,0 +1,47 @@
+{
+  "dashboard": {
+    "title": "Wallet Ledger",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "timeseries",
+        "targets": [{ "expr": "rate(http_requests_total[5m])" }]
+      },
+      {
+        "title": "p95 Latency",
+        "type": "timeseries",
+        "targets": [{ "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))" }]
+      },
+      {
+        "title": "Outbox Lag",
+        "type": "timeseries",
+        "targets": [{ "expr": "outbox_oldest_unpublished_age_seconds" }]
+      },
+      {
+        "title": "Outbox Backlog",
+        "type": "timeseries",
+        "targets": [{ "expr": "outbox_unpublished_count" }]
+      },
+      {
+        "title": "Queue Depth",
+        "type": "timeseries",
+        "targets": [{ "expr": "rabbitmq_queue_messages{queue='wallet.events.main'}" }]
+      },
+      {
+        "title": "DLQ Depth",
+        "type": "timeseries",
+        "targets": [{ "expr": "rabbitmq_queue_messages{queue='wallet.events.dlq'}" }]
+      },
+      {
+        "title": "Invariant Violations",
+        "type": "timeseries",
+        "targets": [{ "expr": "ledger_invariant_violations" }]
+      },
+      {
+        "title": "Rate Limit Rejections",
+        "type": "timeseries",
+        "targets": [{ "expr": "rate_limiter_rejections_total" }]
+      }
+    ]
+  }
+}
