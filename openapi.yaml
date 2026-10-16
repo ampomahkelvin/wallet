@@ -1,0 +1,321 @@
+openapi: 3.0.3
+info:
+  title: Wallet Ledger API
+  version: 1.0.0
+  description: Double-entry payments ledger with idempotent writes and transactional outbox
+servers:
+  - url: http://localhost:5158
+paths:
+  /api/wallets:
+    post:
+      summary: Create a wallet
+      parameters:
+        - name: X-Client-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerId, currency]
+              properties:
+                ownerId:
+                  type: string
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+      responses:
+        '201':
+          description: Wallet created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+  /api/wallets/{id}:
+    get:
+      summary: Get wallet by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Wallet found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '404':
+          description: Wallet not found
+  /api/wallets/{id}/deposits:
+    post:
+      summary: Deposit funds
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Client-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 1
+      responses:
+        '201':
+          description: Deposit successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+  /api/wallets/{id}/withdrawals:
+    post:
+      summary: Withdraw funds
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Client-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 1
+      responses:
+        '201':
+          description: Withdrawal successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+  /api/wallets/{id}/entries:
+    get:
+      summary: Get wallet entries
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: Entries retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntriesResponse'
+  /api/transfers:
+    post:
+      summary: Create a transfer
+      parameters:
+        - name: X-Client-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceWalletId, destinationWalletId, currency, amount]
+              properties:
+                sourceWalletId:
+                  type: string
+                  format: uuid
+                destinationWalletId:
+                  type: string
+                  format: uuid
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+                amount:
+                  type: integer
+                  minimum: 1
+      responses:
+        '201':
+          description: Transfer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+  /api/transfers/{id}:
+    get:
+      summary: Get transfer by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Transfer found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '404':
+          description: Transfer not found
+  /api/transfers/{id}/reverse:
+    post:
+      summary: Reverse a transfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Client-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Transfer reversed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+  /health/deep:
+    get:
+      summary: Deep health check
+      responses:
+        '200':
+          description: Service health details
+components:
+  schemas:
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+        currency:
+          type: string
+        balance:
+          type: integer
+    Transfer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [transfer, deposit, withdrawal, reversal]
+        sourceWalletId:
+          type: string
+          format: uuid
+        destinationWalletId:
+          type: string
+          format: uuid
+        currency:
+          type: string
+        amount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    Entry:
+      type: object
+      properties:
+        id:
+          type: integer
+        transferId:
+          type: string
+          format: uuid
+        amount:
+          type: integer
+        balanceAfter:
+          type: integer
+    EntriesResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        nextCursor:
+          type: integer
+          nullable: true
