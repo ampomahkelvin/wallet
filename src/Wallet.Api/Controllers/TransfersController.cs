@@ -13,32 +13,31 @@ public class TransfersController(ITransferService transfers, IIdempotencyService
     [HttpPost]
     public async Task<ActionResult<TransferResponse>> Create(CreateTransferRequest request, CancellationToken ct)
     {
-        try
-        {
-            var clientId = GetClientId();
-            var key = GetIdempotencyKey();
-            var hash = RequestHasher.Hash("POST", "/api/transfers", request);
+        var clientId = GetClientId();
+        var key = GetIdempotencyKey();
+        var hash = RequestHasher.Hash("POST", "/api/transfers", request);
 
-            var (transfer, replayed) = await idempotency.HandleAsync(
-                clientId, key, hash,
-                async () => await transfers.ExecuteAsync(
+        var (response, status, replayed) = await idempotency.HandleAsync(
+            clientId, key, hash,
+            async db =>
+            {
+                var transfer = await transfers.ExecuteInTransactionAsync(
+                    db,
                     TransferType.Transfer,
                     request.SourceWalletId,
                     request.DestinationWalletId,
                     request.Currency,
                     request.Amount,
                     null,
-                    ct),
-                ct);
+                    ct);
 
-            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+                return (ToResponse(transfer), (short)StatusCodes.Status201Created);
+            },
+            ct);
 
-            return CreatedAtAction(nameof(Get), new { id = transfer.Id }, ToResponse(transfer));
-        }
-        catch (DomainException ex)
-        {
-            return Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
-        }
+        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+
+        return StatusCode(status, response);
     }
 
     [HttpGet("{id:guid}")]
@@ -51,25 +50,22 @@ public class TransfersController(ITransferService transfers, IIdempotencyService
     [HttpPost("{id:guid}/reverse")]
     public async Task<ActionResult<TransferResponse>> Reverse(Guid id, CancellationToken ct)
     {
-        try
-        {
-            var clientId = GetClientId();
-            var key = GetIdempotencyKey();
-            var hash = RequestHasher.Hash("POST", $"/api/transfers/{id}/reverse", null);
+        var clientId = GetClientId();
+        var key = GetIdempotencyKey();
+        var hash = RequestHasher.Hash("POST", $"/api/transfers/{id}/reverse", null);
 
-            var (transfer, replayed) = await idempotency.HandleAsync(
-                clientId, key, hash,
-                async () => await transfers.ReverseAsync(id, ct),
-                ct);
+        var (response, status, replayed) = await idempotency.HandleAsync(
+            clientId, key, hash,
+            async db =>
+            {
+                var transfer = await transfers.ReverseInTransactionAsync(db, id, ct);
+                return (ToResponse(transfer), (short)StatusCodes.Status201Created);
+            },
+            ct);
 
-            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
 
-            return CreatedAtAction(nameof(Get), new { id = transfer.Id }, ToResponse(transfer));
-        }
-        catch (DomainException ex)
-        {
-            return Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
-        }
+        return StatusCode(status, response);
     }
 
     private string GetClientId() =>

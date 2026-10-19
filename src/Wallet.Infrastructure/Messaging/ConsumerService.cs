@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -15,25 +14,26 @@ public class ConsumerService : BackgroundService
 {
     private readonly ILogger<ConsumerService> _logger;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IConnection _connection;
+    private readonly RabbitMqConnectionProvider _connectionProvider;
     private readonly EventDispatcher _dispatcher;
     private const string ConsumerName = "wallet-consumer";
 
     public ConsumerService(
         ILogger<ConsumerService> logger,
         IServiceProvider serviceProvider,
-        IConnection connection,
+        RabbitMqConnectionProvider connectionProvider,
         EventDispatcher dispatcher)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
-        _connection = connection;
+        _connectionProvider = connectionProvider;
         _dispatcher = dispatcher;
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var channel = _connection.CreateModel();
+        var connection = await _connectionProvider.GetConnectionAsync(stoppingToken);
+        var channel = connection.CreateModel();
         channel.BasicQos(0, 10, false);
 
         var consumer = new AsyncEventingBasicConsumer(channel);
@@ -79,6 +79,6 @@ public class ConsumerService : BackgroundService
         channel.BasicConsume(RabbitMqTopology.MainQueueName, false, consumer);
         _logger.LogInformation("Consumer started on queue {QueueName}", RabbitMqTopology.MainQueueName);
 
-        return Task.CompletedTask;
+        await Task.Delay(Timeout.Infinite, stoppingToken);
     }
 }

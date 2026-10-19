@@ -32,11 +32,9 @@ public static class DependencyInjection
         services.AddScoped<IIdempotencyService, IdempotencyService>();
 
         var rabbitMqHost = config.GetConnectionString("RabbitMQ") ?? "amqp://guest:guest@localhost:5672/";
-        services.AddSingleton<IConnection>(_ =>
-        {
-            var factory = new ConnectionFactory { Uri = new Uri(rabbitMqHost), DispatchConsumersAsync = true };
-            return factory.CreateConnection();
-        });
+        services.AddSingleton(sp => new RabbitMqConnectionProvider(
+            rabbitMqHost,
+            sp.GetRequiredService<ILogger<RabbitMqConnectionProvider>>()));
         services.AddSingleton<EventDispatcher>(sp =>
         {
             var dispatcher = new EventDispatcher(sp.GetRequiredService<ILogger<EventDispatcher>>());
@@ -51,7 +49,12 @@ public static class DependencyInjection
         services.AddHostedService<ConsumerService>();
 
         var redisHost = config.GetConnectionString("Redis") ?? "localhost:6379";
-        services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisHost));
+        services.AddSingleton<IConnectionMultiplexer>(_ =>
+        {
+            var options = ConfigurationOptions.Parse(redisHost);
+            options.AbortOnConnectFail = false;
+            return ConnectionMultiplexer.Connect(options);
+        });
 
         services.Configure<RateLimiterOptions>(config.GetSection("RateLimiter"));
         services.AddSingleton<IRateLimiter>(sp =>

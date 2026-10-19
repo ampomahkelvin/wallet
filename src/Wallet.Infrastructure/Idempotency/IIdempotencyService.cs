@@ -1,11 +1,13 @@
+using Wallet.Infrastructure.Persistence;
+
 namespace Wallet.Infrastructure.Idempotency;
 
 public interface IIdempotencyService
 {
-    Task<(T Result, bool Replayed)> HandleAsync<T>(
+    Task<(TResponse Body, short Status, bool Replayed)> HandleAsync<TResponse>(
         string clientId,
         string key,
         byte[] requestHash,
-        Func<Task<T>> execute,
-        CancellationToken ct = default) where T : class;
+        Func<WalletDbContext, Task<(TResponse Body, short Status)>> execute,
+        CancellationToken ct = default) where TResponse : class;
 }

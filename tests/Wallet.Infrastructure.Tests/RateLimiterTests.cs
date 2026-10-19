@@ -48,4 +48,15 @@ public class RateLimiterTests
 
         (await limiter.IsAllowedAsync("client-1", "route-1")).Should().BeTrue();
     }
+
+    [Fact]
+    public void RedisConnect_WhenDown_DoesNotThrow()
+    {
+        var options = StackExchange.Redis.ConfigurationOptions.Parse("localhost:1");
+        options.AbortOnConnectFail = false;
+
+        var act = () => StackExchange.Redis.ConnectionMultiplexer.Connect(options);
+
+        act.Should().NotThrow();
+    }
 }

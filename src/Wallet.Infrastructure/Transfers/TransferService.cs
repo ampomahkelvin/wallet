@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Wallet.Domain;
 using Wallet.Infrastructure.Persistence;
@@ -15,15 +16,40 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         Guid? reversesTransferId = null,
         CancellationToken ct = default)
     {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var result = await ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
+    public Task<Transfer> ExecuteInTransactionAsync(
+        WalletDbContext db,
+        TransferType type,
+        Guid sourceWalletId,
+        Guid destinationWalletId,
+        string currency,
+        long amount,
+        Guid? reversesTransferId = null,
+        CancellationToken ct = default)
+        => ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, ct);
+
+    private async Task<Transfer> ExecuteCoreAsync(
+        WalletDbContext db,
+        TransferType type,
+        Guid sourceWalletId,
+        Guid destinationWalletId,
+        string currency,
+        long amount,
+        Guid? reversesTransferId,
+        CancellationToken ct)
+    {
         if (amount <= 0)
-            throw new DomainException("Amount must be positive.");
+            throw new ValidationException("Amount must be positive.");
         if (sourceWalletId == destinationWalletId)
-            throw new DomainException("Source and destination wallets must be different.");
+            throw new ValidationException("Source and destination wallets must be different.");
 
         currency = currency.ToUpperInvariant();
-
-        await using var db = await contextFactory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         var walletIds = new[] { sourceWalletId, destinationWalletId }.OrderBy(id => id).ToArray();
 
@@ -37,18 +63,18 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             .ToListAsync(ct);
 
         if (wallets.Count != 2)
-            throw new DomainException("One or both wallets not found.");
+            throw new NotFoundException("One or both wallets not found.");
 
         var source = wallets.Find(w => w.Id == sourceWalletId)
-            ?? throw new DomainException("Source wallet not found.");
+            ?? throw new NotFoundException("Source wallet not found.");
         var dest = wallets.Find(w => w.Id == destinationWalletId)
-            ?? throw new DomainException("Destination wallet not found.");
+            ?? throw new NotFoundException("Destination wallet not found.");
 
         if (source.Currency != currency || dest.Currency != currency)
-            throw new DomainException("Currency mismatch.");
+            throw new ValidationException("Currency mismatch.");
 
         if (source.Kind == WalletKind.User && source.Balance < amount)
-            throw new DomainException("Insufficient funds.");
+            throw new InsufficientFundsException("Insufficient funds.");
 
         var transfer = Transfer.Create(type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId);
 
@@ -65,7 +91,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             TransferType.Deposit => "deposit.completed",
             TransferType.Withdrawal => "withdrawal.completed",
             TransferType.Reversal => "transfer.reversed",
-            _ => throw new DomainException($"Unknown transfer type: {type}")
+            _ => throw new ValidationException($"Unknown transfer type: {type}")
         };
 
         var outboxEvent = OutboxEvent.Create(transfer.Id, eventType, new
@@ -81,8 +107,6 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         db.OutboxEvents.Add(outboxEvent);
 
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
         return transfer;
     }
 
@@ -98,24 +122,53 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
     public async Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
-
         var original = await db.Transfers
             .AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == transferId, ct);
 
         if (original is null)
-            throw new DomainException("Transfer not found.");
+            throw new NotFoundException("Transfer not found.");
 
         if (original.Type == TransferType.Reversal)
-            throw new DomainException("A reversal cannot be reversed.");
+            throw new ValidationException("A reversal cannot be reversed.");
 
         var alreadyReversed = await db.Transfers
             .AnyAsync(t => t.ReversesTransferId == transferId, ct);
 
         if (alreadyReversed)
-            throw new DomainException("Transfer has already been reversed.");
+            throw new ConflictException("Transfer has already been reversed.");
 
-        return await ExecuteAsync(
+        return await ExecuteInTransactionAsync(
+            db,
+            TransferType.Reversal,
+            original.DestinationWalletId,
+            original.SourceWalletId,
+            original.Currency,
+            original.Amount,
+            transferId,
+            ct);
+    }
+
+    public async Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, CancellationToken ct = default)
+    {
+        var original = await db.Transfers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == transferId, ct);
+
+        if (original is null)
+            throw new NotFoundException("Transfer not found.");
+
+        if (original.Type == TransferType.Reversal)
+            throw new ValidationException("A reversal cannot be reversed.");
+
+        var alreadyReversed = await db.Transfers
+            .AnyAsync(t => t.ReversesTransferId == transferId, ct);
+
+        if (alreadyReversed)
+            throw new ConflictException("Transfer has already been reversed.");
+
+        return await ExecuteCoreAsync(
+            db,
             TransferType.Reversal,
             original.DestinationWalletId,
             original.SourceWalletId,
@@ -132,7 +185,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         CancellationToken ct = default)
     {
         if (limit is < 1 or > 100)
-            throw new DomainException("Limit must be between 1 and 100.");
+            throw new ValidationException("Limit must be between 1 and 100.");
 
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         var query = db.LedgerEntries
