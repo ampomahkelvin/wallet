@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using Testcontainers.PostgreSql;
@@ -21,7 +22,7 @@ public class RelayTests : IAsyncLifetime
     private readonly RabbitMqContainer _rabbitmq;
     private WalletDbContext _db = null!;
     private TransferService _service = null!;
-    private IConnection _connection = null!;
+    private RabbitMqConnectionProvider _connectionProvider = null!;
     private IModel _channel = null!;
     private ILogger<RelayService> _logger = null!;
 
@@ -59,9 +60,11 @@ public class RelayTests : IAsyncLifetime
 
         _service = new TransferService(new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
-        var factory = new ConnectionFactory { Uri = new Uri(_rabbitmq.GetConnectionString()) };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        _connectionProvider = new RabbitMqConnectionProvider(
+            _rabbitmq.GetConnectionString(),
+            NullLogger<RabbitMqConnectionProvider>.Instance);
+        var connection = await _connectionProvider.GetConnectionAsync();
+        _channel = connection.CreateModel();
 
         using var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
         _logger = loggerFactory.CreateLogger<RelayService>();
@@ -96,10 +99,10 @@ public class RelayTests : IAsyncLifetime
         var transfer = await _service.ExecuteAsync(
             TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connectionProvider,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
-        relay.Initialize();
+        await relay.InitializeAsync();
         await relay.PollAndPublishAsync(CancellationToken.None);
 
         var published = await WaitForConditionAsync(async () =>
@@ -123,10 +126,10 @@ public class RelayTests : IAsyncLifetime
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.PublishedAt, DateTimeOffset.UtcNow));
         await _db.SaveChangesAsync();
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connectionProvider,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
-        relay.Initialize();
+        await relay.InitializeAsync();
         await relay.PollAndPublishAsync(CancellationToken.None);
 
         await Task.Delay(500);
@@ -145,10 +148,10 @@ public class RelayTests : IAsyncLifetime
         await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
         await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
 
-        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connection,
+        var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connectionProvider,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
-        relay.Initialize();
+        await relay.InitializeAsync();
         await relay.PollAndPublishAsync(CancellationToken.None);
 
         var allPublished = await WaitForConditionAsync(async () =>
@@ -161,6 +164,34 @@ public class RelayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Relay_BrokerOutage_LeavesEventUnpublishedThenDrains()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+
+        var relay = CreateRelay(_connectionProvider);
+        await relay.InitializeAsync();
+        await relay.PollAndPublishAsync(CancellationToken.None);
+        (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(0);
+
+        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(1);
+
+        await _rabbitmq.StopAsync();
+        await Task.Delay(500);
+        (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(1);
+
+        await _rabbitmq.StartAsync();
+
+        var restartedRelay = CreateRelay(new RabbitMqConnectionProvider(
+            _rabbitmq.GetConnectionString(),
+            NullLogger<RabbitMqConnectionProvider>.Instance));
+        await restartedRelay.InitializeAsync();
+        await restartedRelay.PollAndPublishAsync(CancellationToken.None);
+
+        (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(0);
+    }
+
+    [Fact]
     public async Task TopologySetup_CreatesExpectedQueues()
     {
         RabbitMqTopology.DeclareTopology(_channel);
@@ -168,6 +199,10 @@ public class RelayTests : IAsyncLifetime
         _channel.QueueDeclarePassive(RabbitMqTopology.MainQueueName);
         _channel.QueueDeclarePassive(RabbitMqTopology.DlqName);
     }
+
+    private RelayService CreateRelay(RabbitMqConnectionProvider provider) =>
+        new(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), provider,
+            Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
 
     private static async Task<bool> WaitForConditionAsync(Func<Task<bool>> condition, TimeSpan timeout)
     {

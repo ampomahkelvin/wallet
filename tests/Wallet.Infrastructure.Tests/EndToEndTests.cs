@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
@@ -19,7 +20,7 @@ public class EndToEndTests : IAsyncLifetime
     private readonly RabbitMqContainer _rabbitmq;
     private WalletDbContext _db = null!;
     private TransferService _service = null!;
-    private IConnection _connection = null!;
+    private RabbitMqConnectionProvider _connectionProvider = null!;
     private IModel _channel = null!;
 
     public EndToEndTests()
@@ -56,9 +57,11 @@ public class EndToEndTests : IAsyncLifetime
 
         _service = new TransferService(new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
-        var factory = new ConnectionFactory { Uri = new Uri(_rabbitmq.GetConnectionString()) };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        _connectionProvider = new RabbitMqConnectionProvider(
+            _rabbitmq.GetConnectionString(),
+            NullLogger<RabbitMqConnectionProvider>.Instance);
+        var connection = await _connectionProvider.GetConnectionAsync();
+        _channel = connection.CreateModel();
         RabbitMqTopology.DeclareTopology(_channel);
     }
 
@@ -134,9 +137,9 @@ public class EndToEndTests : IAsyncLifetime
         var relay = new RelayService(
             LoggerFactory.Create(b => b.AddConsole()).CreateLogger<RelayService>(),
             new ScopeFactoryWrapper(_postgres.GetConnectionString()),
-            _connection,
+            _connectionProvider,
             Microsoft.Extensions.Options.Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 500 }));
-        relay.Initialize();
+        await relay.InitializeAsync();
 
         var allPublished = await WaitForConditionAsync(async () =>
         {

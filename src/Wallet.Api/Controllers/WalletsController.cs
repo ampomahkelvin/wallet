@@ -17,25 +17,22 @@ public class WalletsController(
     [HttpPost]
     public async Task<ActionResult<WalletResponse>> Open(OpenWalletRequest request, CancellationToken ct)
     {
-        try
-        {
-            var clientId = GetClientId();
-            var key = GetIdempotencyKey();
-            var hash = RequestHasher.Hash("POST", "/api/wallets", request);
+        var clientId = GetClientId();
+        var key = GetIdempotencyKey();
+        var hash = RequestHasher.Hash("POST", "/api/wallets", request);
 
-            var (wallet, replayed) = await idempotency.HandleAsync(
-                clientId, key, hash,
-                async () => await wallets.OpenAsync(request.OwnerId, request.Currency, ct),
-                ct);
+        var (response, status, replayed) = await idempotency.HandleAsync(
+            clientId, key, hash,
+            async db =>
+            {
+                var wallet = await wallets.OpenInTransactionAsync(db, request.OwnerId, request.Currency, ct);
+                return (ToWalletResponse(wallet), (short)StatusCodes.Status201Created);
+            },
+            ct);
 
-            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
 
-            return CreatedAtAction(nameof(Get), new { id = wallet.Id }, ToWalletResponse(wallet));
-        }
-        catch (DomainException ex)
-        {
-            return Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
-        }
+        return StatusCode(status, response);
     }
 
     [HttpGet("{id:guid}")]
@@ -48,81 +45,73 @@ public class WalletsController(
     [HttpPost("{id:guid}/deposits")]
     public async Task<ActionResult<TransferResponse>> Deposit(Guid id, DepositRequest request, CancellationToken ct)
     {
-        try
-        {
-            var clientId = GetClientId();
-            var key = GetIdempotencyKey();
-            var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/deposits", request);
+        var clientId = GetClientId();
+        var key = GetIdempotencyKey();
+        var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/deposits", request);
 
-            var (transfer, replayed) = await idempotency.HandleAsync(
-                clientId, key, hash,
-                async () =>
-                {
-                    var wallet = await wallets.GetAsync(id, ct)
-                        ?? throw new DomainException("Wallet not found.");
+        var (response, status, replayed) = await idempotency.HandleAsync(
+            clientId, key, hash,
+            async db =>
+            {
+                var wallet = await wallets.GetAsync(db, id, ct)
+                    ?? throw new NotFoundException("Wallet not found.");
 
-                    var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
-                        ?? throw new DomainException("System wallet not found.");
+                var systemWallet = await wallets.GetSystemWalletAsync(db, wallet.Currency, ct)
+                    ?? throw new NotFoundException("System wallet not found.");
 
-                    return await transfers.ExecuteAsync(
-                        TransferType.Deposit,
-                        systemWallet.Id,
-                        wallet.Id,
-                        wallet.Currency,
-                        request.Amount,
-                        null,
-                        ct);
-                },
-                ct);
+                var transfer = await transfers.ExecuteInTransactionAsync(
+                    db,
+                    TransferType.Deposit,
+                    systemWallet.Id,
+                    wallet.Id,
+                    wallet.Currency,
+                    request.Amount,
+                    null,
+                    ct);
 
-            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+                return (ToTransferResponse(transfer), (short)StatusCodes.Status201Created);
+            },
+            ct);
 
-            return CreatedAtAction("Get", "Transfers", new { id = transfer.Id }, ToTransferResponse(transfer));
-        }
-        catch (DomainException ex)
-        {
-            return Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
-        }
+        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+
+        return StatusCode(status, response);
     }
 
     [HttpPost("{id:guid}/withdrawals")]
     public async Task<ActionResult<TransferResponse>> Withdraw(Guid id, WithdrawalRequest request, CancellationToken ct)
     {
-        try
-        {
-            var clientId = GetClientId();
-            var key = GetIdempotencyKey();
-            var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/withdrawals", request);
+        var clientId = GetClientId();
+        var key = GetIdempotencyKey();
+        var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/withdrawals", request);
 
-            var (transfer, replayed) = await idempotency.HandleAsync(
-                clientId, key, hash,
-                async () =>
-                {
-                    var wallet = await wallets.GetAsync(id, ct)
-                        ?? throw new DomainException("Wallet not found.");
+        var (response, status, replayed) = await idempotency.HandleAsync(
+            clientId, key, hash,
+            async db =>
+            {
+                var wallet = await wallets.GetAsync(db, id, ct)
+                    ?? throw new NotFoundException("Wallet not found.");
 
-                    var systemWallet = await wallets.GetSystemWalletAsync(wallet.Currency, ct)
-                        ?? throw new DomainException("System wallet not found.");
+                var systemWallet = await wallets.GetSystemWalletAsync(db, wallet.Currency, ct)
+                    ?? throw new NotFoundException("System wallet not found.");
 
-                    return await transfers.ExecuteAsync(
-                        TransferType.Withdrawal,
-                        wallet.Id,
-                        systemWallet.Id,
-                        wallet.Currency,
-                        request.Amount,
-                        null,
-                        ct);
-                },
-                ct);
+                var transfer = await transfers.ExecuteInTransactionAsync(
+                    db,
+                    TransferType.Withdrawal,
+                    wallet.Id,
+                    systemWallet.Id,
+                    wallet.Currency,
+                    request.Amount,
+                    null,
+                    ct);
 
-            if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+                return (ToTransferResponse(transfer), (short)StatusCodes.Status201Created);
+            },
+            ct);
 
-            return CreatedAtAction("Get", "Transfers", new { id = transfer.Id }, ToTransferResponse(transfer));
-        }
-        catch (DomainException ex)
-        {
-            return Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
-        }
+        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+
+        return StatusCode(status, response);
     }
 
     [HttpGet("{id:guid}/entries")]

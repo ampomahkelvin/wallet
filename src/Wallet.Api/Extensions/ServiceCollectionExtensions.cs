@@ -1,3 +1,4 @@
+using Wallet.Api.Middleware;
 using Wallet.Infrastructure;
 
 namespace Wallet.Api.Extensions;
@@ -10,10 +11,9 @@ public static class ServiceCollectionExtensions
         services.AddControllers();
         services.AddOpenApi();
         services.AddProblemDetails();
+        services.AddExceptionHandler<GlobalExceptionHandler>();
 
         services.AddInfrastructure(config);
-
-        // Later: services.AddObservability(config); services.AddIdempotency();
 
         return services;
     }

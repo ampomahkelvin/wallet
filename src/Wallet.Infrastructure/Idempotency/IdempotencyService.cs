@@ -1,69 +1,87 @@
+using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Wallet.Domain;
 using Wallet.Infrastructure.Persistence;
 
 namespace Wallet.Infrastructure.Idempotency;
 
-public class IdempotencyService(WalletDbContext db) : IIdempotencyService
+public class IdempotencyService(
+    IDbContextFactory<WalletDbContext> contextFactory,
+    ILogger<IdempotencyService> logger) : IIdempotencyService
 {
     private static readonly TimeSpan KeyTtl = TimeSpan.FromHours(24);
 
-    public async Task<(T Result, bool Replayed)> HandleAsync<T>(
+    public async Task<(TResponse Body, short Status, bool Replayed)> HandleAsync<TResponse>(
         string clientId,
         string key,
         byte[] requestHash,
-        Func<Task<T>> execute,
-        CancellationToken ct = default) where T : class
+        Func<WalletDbContext, Task<(TResponse Body, short Status)>> execute,
+        CancellationToken ct = default) where TResponse : class
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
 
-        var claimed = await db.IdempotencyKeys
-            .FromSqlInterpolated($@"
-                INSERT INTO idempotency_keys (client_id, key, request_hash, expires_at)
-                VALUES ({clientId}, {key}, {requestHash}, now() + interval '24 hours')
-                ON CONFLICT (client_id, key) DO NOTHING
-                RETURNING key")
-            .ToListAsync(ct);
-
-        if (claimed.Count == 0)
+        while (true)
         {
-            var existing = await db.IdempotencyKeys
-                .AsNoTracking()
+            var now = DateTimeOffset.UtcNow;
+
+            var claimed = await db.Database.ExecuteSqlInterpolatedAsync($@"
+                INSERT INTO idempotency_keys (""ClientId"", ""Key"", ""RequestHash"", ""ExpiresAt"")
+                VALUES ({clientId}, {key}, {requestHash}, {now.Add(KeyTtl)})
+                ON CONFLICT (""ClientId"", ""Key"") DO NOTHING", ct);
+
+            if (claimed == 1)
+                break;
+
+            var existing = await db.IdempotencyKeys.AsNoTracking()
                 .FirstOrDefaultAsync(k => k.ClientId == clientId && k.Key == key, ct);
 
-            if (existing is not null)
+            if (existing is null)
+                continue;
+
+            if (!existing.RequestHash.SequenceEqual(requestHash))
+                throw new IdempotencyKeyReusedException("Idempotency key reused with a different payload.");
+
+            if (existing.ExpiresAt < DateTimeOffset.UtcNow)
             {
-                if (existing.RequestHash.SequenceEqual(requestHash))
+                var reclaimed = await db.Database.ExecuteSqlInterpolatedAsync($@"
+                    UPDATE idempotency_keys
+                    SET ""RequestHash"" = {requestHash},
+                        ""ResponseStatus"" = NULL,
+                        ""ResponseBody"" = NULL,
+                        ""ExpiresAt"" = {now.Add(KeyTtl)}
+                    WHERE ""ClientId"" = {clientId} AND ""Key"" = {key} AND ""ExpiresAt"" < {now}", ct);
+
+                if (reclaimed > 0)
+                    break;
+
+                continue;
+            }
+
+            if (existing.ResponseBody is not null)
+            {
+                var cached = JsonSerializer.Deserialize<TResponse>(existing.ResponseBody);
+                if (cached is not null)
                 {
-                    if (existing.ResponseBody is not null)
-                    {
-                        var replayed = JsonSerializer.Deserialize<T>(existing.ResponseBody);
-                        if (replayed is not null)
-                            return (replayed, true);
-                    }
-                }
-                else
-                {
-                    throw new DomainException("Idempotency key reused with different payload.");
+                    logger.LogInformation("Replaying idempotency key {Key} for client {ClientId}", key, clientId);
+                    return (cached, existing.ResponseStatus ?? 200, true);
                 }
             }
 
-            var newKey = IdempotencyKey.Claim(clientId, key, requestHash, KeyTtl);
-            db.IdempotencyKeys.Add(newKey);
-            await db.SaveChangesAsync(ct);
+            throw new ConflictException("Idempotency key is being processed or has no cached response.");
         }
 
-        var executed = await execute();
+        var (response, status) = await execute(db);
 
-        var responseBody = JsonSerializer.Serialize(executed);
-        await db.IdempotencyKeys
-            .Where(k => k.ClientId == clientId && k.Key == key)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(k => k.ResponseStatus, (short)200)
-                .SetProperty(k => k.ResponseBody, responseBody), ct);
+        var json = JsonSerializer.Serialize(response);
+        await db.Database.ExecuteSqlInterpolatedAsync($@"
+            UPDATE idempotency_keys
+            SET ""ResponseStatus"" = {status}, ""ResponseBody"" = {json}
+            WHERE ""ClientId"" = {clientId} AND ""Key"" = {key}", ct);
 
         await tx.CommitAsync(ct);
-        return (executed, false);
+        return (response, status, false);
     }
 }

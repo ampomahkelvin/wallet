@@ -1,4 +1,5 @@
 using Wallet.Domain;
+using Wallet.Infrastructure.Persistence;
 
 namespace Wallet.Infrastructure.Transfers;
 
@@ -13,9 +14,21 @@ public interface ITransferService
         Guid? reversesTransferId = null,
         CancellationToken ct = default);
 
+    Task<Transfer> ExecuteInTransactionAsync(
+        WalletDbContext db,
+        TransferType type,
+        Guid sourceWalletId,
+        Guid destinationWalletId,
+        string currency,
+        long amount,
+        Guid? reversesTransferId = null,
+        CancellationToken ct = default);
+
     Task<Transfer?> GetAsync(Guid id, CancellationToken ct = default);
 
     Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default);
+
+    Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, CancellationToken ct = default);
 
     Task<IReadOnlyList<LedgerEntry>> GetWalletEntriesAsync(
         Guid walletId,

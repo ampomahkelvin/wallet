@@ -2,6 +2,7 @@ using System.Text;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
@@ -19,7 +20,7 @@ public class ConsumerTests : IAsyncLifetime
     private readonly RabbitMqContainer _rabbitmq;
     private WalletDbContext _db = null!;
     private TransferService _service = null!;
-    private IConnection _connection = null!;
+    private RabbitMqConnectionProvider _connectionProvider = null!;
     private IModel _channel = null!;
     private EventDispatcher _dispatcher = null!;
     private readonly List<string> _processedEvents = [];
@@ -58,9 +59,11 @@ public class ConsumerTests : IAsyncLifetime
 
         _service = new TransferService(new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
-        var factory = new ConnectionFactory { Uri = new Uri(_rabbitmq.GetConnectionString()) };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        _connectionProvider = new RabbitMqConnectionProvider(
+            _rabbitmq.GetConnectionString(),
+            NullLogger<RabbitMqConnectionProvider>.Instance);
+        var connection = await _connectionProvider.GetConnectionAsync();
+        _channel = connection.CreateModel();
         RabbitMqTopology.DeclareTopology(_channel);
 
         _dispatcher = new EventDispatcher(

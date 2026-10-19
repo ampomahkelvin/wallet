@@ -91,7 +91,7 @@ public class TransferServiceTests : IAsyncLifetime
         _db.Wallets.AddRange(alice, bob);
         await _db.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<DomainException>(() =>
+        await Assert.ThrowsAsync<InsufficientFundsException>(() =>
             _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100));
     }
 
@@ -103,7 +103,7 @@ public class TransferServiceTests : IAsyncLifetime
         _db.Wallets.AddRange(alice, bob);
         await _db.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<DomainException>(() =>
+        await Assert.ThrowsAsync<ValidationException>(() =>
             _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100));
     }
 
@@ -114,7 +114,7 @@ public class TransferServiceTests : IAsyncLifetime
         _db.Wallets.Add(alice);
         await _db.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<DomainException>(() =>
+        await Assert.ThrowsAsync<NotFoundException>(() =>
             _service.ExecuteAsync(TransferType.Transfer, alice.Id, Guid.NewGuid(), "GHS", 100));
     }
 
@@ -123,7 +123,7 @@ public class TransferServiceTests : IAsyncLifetime
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
 
-        await Assert.ThrowsAsync<DomainException>(() =>
+        await Assert.ThrowsAsync<ValidationException>(() =>
             _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 0));
     }
 
@@ -134,7 +134,7 @@ public class TransferServiceTests : IAsyncLifetime
         _db.Wallets.Add(alice);
         await _db.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<DomainException>(() =>
+        await Assert.ThrowsAsync<ValidationException>(() =>
             _service.ExecuteAsync(TransferType.Transfer, alice.Id, alice.Id, "GHS", 100));
     }
 
@@ -162,7 +162,7 @@ public class TransferServiceTests : IAsyncLifetime
             TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
         await _service.ReverseAsync(transfer.Id);
 
-        await Assert.ThrowsAsync<DomainException>(() => _service.ReverseAsync(transfer.Id));
+        await Assert.ThrowsAsync<ConflictException>(() => _service.ReverseAsync(transfer.Id));
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class TransferServiceTests : IAsyncLifetime
             TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
         var reversal = await _service.ReverseAsync(transfer.Id);
 
-        await Assert.ThrowsAsync<DomainException>(() => _service.ReverseAsync(reversal.Id));
+        await Assert.ThrowsAsync<ValidationException>(() => _service.ReverseAsync(reversal.Id));
     }
 
     [Fact]
