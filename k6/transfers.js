@@ -22,15 +22,25 @@ export const options = {
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:5158';
+const CLIENT_ID = `k6-client-${__VU}`;
+
+function headers(idempotencyKey) {
+  return {
+    'Content-Type': 'application/json',
+    'X-Client-Id': CLIENT_ID,
+    'Idempotency-Key': idempotencyKey,
+  };
+}
 
 function createWallet(ownerId) {
   const res = http.post(`${BASE_URL}/api/wallets`, JSON.stringify({
     ownerId,
     currency: 'GHS',
   }), {
-    headers: { 'Content-Type': 'application/json', 'X-Client-Id': 'k6-test' },
+    headers: headers(`wallet-${ownerId}-${Date.now()}`),
   });
-  check(res, { 'wallet created': (r) => r.status === 201 });
+  const success = check(res, { 'wallet created': (r) => r.status === 201 });
+  errorRate.add(!success);
   return res.json('id');
 }
 
@@ -39,7 +49,7 @@ function deposit(walletId, amount) {
   const res = http.post(`${BASE_URL}/api/wallets/${walletId}/deposits`, JSON.stringify({
     amount,
   }), {
-    headers: { 'Content-Type': 'application/json', 'X-Client-Id': 'k6-test', 'Idempotency-Key': `deposit-${walletId}-${amount}-${Date.now()}` },
+    headers: headers(`deposit-${walletId}-${amount}-${Date.now()}`),
   });
   depositDuration.add(Date.now() - start);
   const success = check(res, { 'deposit successful': (r) => r.status === 201 });
@@ -54,7 +64,7 @@ function transfer(sourceId, destId, amount) {
     currency: 'GHS',
     amount,
   }), {
-    headers: { 'Content-Type': 'application/json', 'X-Client-Id': 'k6-test', 'Idempotency-Key': `transfer-${sourceId}-${destId}-${Date.now()}` },
+    headers: headers(`transfer-${sourceId}-${destId}-${Date.now()}`),
   });
   transferDuration.add(Date.now() - start);
   const success = check(res, { 'transfer successful': (r) => r.status === 201 });
@@ -62,9 +72,9 @@ function transfer(sourceId, destId, amount) {
 }
 
 export default function () {
-  const userNum = randomIntBetween(1, 20);
-  const walletA = createWallet(`k6-user-${userNum}-a`);
-  const walletB = createWallet(`k6-user-${userNum}-b`);
+  const ownerSuffix = `${__VU}-${__ITER}`;
+  const walletA = createWallet(`k6-user-${ownerSuffix}-a`);
+  const walletB = createWallet(`k6-user-${ownerSuffix}-b`);
 
   deposit(walletA, 10000);
   deposit(walletB, 10000);

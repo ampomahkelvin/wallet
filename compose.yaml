@@ -36,21 +36,49 @@
       timeout: 3s
       retries: 10
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5158:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: "http://+:8080"
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=wallet;Username=wallet;Password=wallet"
+      ConnectionStrings__RabbitMQ: "amqp://guest:guest@rabbitmq:5672/"
+      ConnectionStrings__Redis: "redis:6379"
+      Relay__PollIntervalMs: "5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.3.0
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
-      - rabbitmq
+      - api
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.6.0
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
 

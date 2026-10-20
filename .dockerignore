@@ -16,6 +16,8 @@
 **/charts
 **/docker-compose*
 **/Dockerfile*
+**/k6
+**/tests
 **/node_modules
 **/npm-debug.log
 **/obj
