@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Wallet.Domain;
+using Wallet.Infrastructure.Observability;
 using Wallet.Infrastructure.Persistence;
 
 namespace Wallet.Infrastructure.Transfers;
@@ -107,6 +108,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         db.OutboxEvents.Add(outboxEvent);
 
         await db.SaveChangesAsync(ct);
+        LedgerMetrics.TransfersTotal.Inc();
         return transfer;
     }
 

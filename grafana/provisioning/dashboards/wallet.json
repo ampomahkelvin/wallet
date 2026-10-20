@@ -1,0 +1,74 @@
+{
+  "title": "Wallet Ledger",
+  "uid": "wallet-ledger",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Transfer Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "rate(wallet_transfers_total[1m])", "legendFormat": "transfers/s" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "Request Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "rate(http_request_duration_seconds_count[1m])", "legendFormat": "{{method}} {{path}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "id": 3,
+      "title": "p95 Latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "{{path}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 4,
+      "title": "Outbox Lag",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "wallet_outbox_oldest_age_seconds", "legendFormat": "oldest unpublished (s)" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "id": 5,
+      "title": "Outbox Backlog",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "wallet_outbox_unpublished", "legendFormat": "unpublished" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+    },
+    {
+      "id": 6,
+      "title": "Invariant Violations",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "wallet_invariant_violations", "legendFormat": "violations" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+    },
+    {
+      "id": 7,
+      "title": "Rate Limit Rejections",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "rate(wallet_rate_limit_rejections_total[5m])", "legendFormat": "rejections/s" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+    },
+    {
+      "id": 8,
+      "title": "Rate Limiter Fail-Open",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus" },
+      "targets": [{ "expr": "wallet_rate_limiter_fail_open_total", "legendFormat": "fail-open count" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+    }
+  ]
+}

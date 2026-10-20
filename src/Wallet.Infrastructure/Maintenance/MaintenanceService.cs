@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Wallet.Domain;
+using Wallet.Infrastructure.Observability;
 using Wallet.Infrastructure.Persistence;
 
 namespace Wallet.Infrastructure.Maintenance;
@@ -41,49 +41,45 @@ public class MaintenanceService(
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        var lockResult = await db.Database
-            .SqlQueryRaw<bool>("SELECT pg_try_advisory_lock({0})", AdvisoryLockKey)
+        var gotLock = await db.Database
+            .SqlQueryRaw<bool>("SELECT pg_try_advisory_xact_lock({0}) AS \"Value\"", AdvisoryLockKey)
             .FirstOrDefaultAsync(ct);
 
-        if (lockResult != true)
+        if (gotLock != true)
         {
             logger.LogInformation("Another maintenance instance is running. Skipping.");
             await tx.RollbackAsync(ct);
             return;
         }
 
-        try
-        {
-            var now = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
 
-            var deletedKeys = await db.IdempotencyKeys
-                .Where(k => k.ExpiresAt < now)
-                .ExecuteDeleteAsync(ct);
+        var deletedKeys = await db.IdempotencyKeys
+            .Where(k => k.ExpiresAt < now)
+            .ExecuteDeleteAsync(ct);
 
-            logger.LogInformation("Deleted {Count} expired idempotency keys", deletedKeys);
+        logger.LogInformation("Deleted {Count} expired idempotency keys", deletedKeys);
 
-            var deletedEvents = await db.OutboxEvents
-                .Where(e => e.PublishedAt < now.AddDays(-7))
-                .ExecuteDeleteAsync(ct);
+        var deletedEvents = await db.OutboxEvents
+            .Where(e => e.PublishedAt < now.AddDays(-7))
+            .ExecuteDeleteAsync(ct);
 
-            logger.LogInformation("Deleted {Count} old published outbox events", deletedEvents);
+        logger.LogInformation("Deleted {Count} old published outbox events", deletedEvents);
 
-            var deletedProcessed = await db.ConsumerProcessedEvents
-                .Where(e => e.ProcessedAt < now.AddDays(-30))
-                .ExecuteDeleteAsync(ct);
+        var deletedProcessed = await db.ConsumerProcessedEvents
+            .Where(e => e.ProcessedAt < now.AddDays(-30))
+            .ExecuteDeleteAsync(ct);
 
-            logger.LogInformation("Deleted {Count} old processed events", deletedProcessed);
+        logger.LogInformation("Deleted {Count} old processed events", deletedProcessed);
 
-            await db.Database.ExecuteSqlRawAsync(
-                "SELECT pg_advisory_unlock({0})", AdvisoryLockKey);
+        var violations = await ReconciliationService.FindViolationsAsync(db, ct);
+        LedgerMetrics.InvariantViolations.Set(violations.Count);
 
-            await tx.CommitAsync(ct);
-        }
-        catch
-        {
-            await db.Database.ExecuteSqlRawAsync(
-                "SELECT pg_advisory_unlock({0})", AdvisoryLockKey);
-            throw;
-        }
+        if (violations.Count > 0)
+            logger.LogWarning("Ledger invariant violations detected for wallets: {Wallets}", string.Join(", ", violations));
+
+        await ReconciliationService.RefreshOutboxStatsAsync(db, ct);
+
+        await tx.CommitAsync(ct);
     }
 }

@@ -26,33 +26,27 @@ public class WalletApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Development");
-
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IHostedService>();
             services.RemoveAll<IRateLimiter>();
             services.AddSingleton<IRateLimiter, AllowAllRateLimiter>();
+
+            services.RemoveAll<IDbContextFactory<WalletDbContext>>();
+            services.AddSingleton<IDbContextFactory<WalletDbContext>>(
+                _ => new TestDbContextFactory(_postgres.GetConnectionString()));
+            services.RemoveAll<WalletDbContext>();
+            services.AddScoped<WalletDbContext>(
+                sp => sp.GetRequiredService<IDbContextFactory<WalletDbContext>>().CreateDbContext());
         });
     }
 
     public WalletDbContext CreateDbContext()
-    {
-        var options = new DbContextOptionsBuilder<WalletDbContext>()
-            .UseNpgsql(_postgres.GetConnectionString())
-            .Options;
-        return new WalletDbContext(options);
-    }
+        => new TestDbContextFactory(_postgres.GetConnectionString()).CreateDbContext();
 
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
-
-        Environment.SetEnvironmentVariable("ConnectionStrings__Postgres", _postgres.GetConnectionString());
-        Environment.SetEnvironmentVariable("ConnectionStrings__RabbitMQ", "amqp://localhost:5672/");
-        Environment.SetEnvironmentVariable("ConnectionStrings__Redis", "localhost:6379");
-        Environment.SetEnvironmentVariable("Relay__PollIntervalMs", "60000");
-
         using var db = CreateDbContext();
         await db.Database.MigrateAsync();
         var systemWallet = Wallet.Domain.Wallet.CreateSystem("GHS");
@@ -62,12 +56,19 @@ public class WalletApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public new async Task DisposeAsync()
     {
-        Environment.SetEnvironmentVariable("ConnectionStrings__Postgres", null);
-        Environment.SetEnvironmentVariable("ConnectionStrings__RabbitMQ", null);
-        Environment.SetEnvironmentVariable("ConnectionStrings__Redis", null);
-        Environment.SetEnvironmentVariable("Relay__PollIntervalMs", null);
         await base.DisposeAsync();
         await _postgres.DisposeAsync();
+    }
+}
+
+public class TestDbContextFactory(string connectionString) : IDbContextFactory<WalletDbContext>
+{
+    public WalletDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<WalletDbContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+        return new WalletDbContext(options);
     }
 }
 

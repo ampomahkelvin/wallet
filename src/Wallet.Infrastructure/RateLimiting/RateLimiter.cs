@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
+using Wallet.Infrastructure.Observability;
 
 namespace Wallet.Infrastructure.RateLimiting;
 
@@ -27,7 +28,10 @@ public class InMemoryRateLimiter(int maxRequests, TimeSpan window) : IRateLimite
                 timestamps.Dequeue();
 
             if (timestamps.Count >= maxRequests)
+            {
+                LedgerMetrics.RateLimiterRejections.Inc();
                 return Task.FromResult(false);
+            }
 
             timestamps.Enqueue(now);
             return Task.FromResult(true);
@@ -37,6 +41,14 @@ public class InMemoryRateLimiter(int maxRequests, TimeSpan window) : IRateLimite
 
 public class RedisRateLimiter : IRateLimiter
 {
+    private const string Script = """
+        local current = redis.call('INCR', KEYS[1])
+        if current == 1 then
+          redis.call('EXPIRE', KEYS[1], ARGV[1])
+        end
+        return current
+        """;
+
     private readonly IConnectionMultiplexer _redis;
     private readonly int _maxRequests;
     private readonly TimeSpan _window;
@@ -61,15 +73,23 @@ public class RedisRateLimiter : IRateLimiter
         try
         {
             var db = _redis.GetDatabase();
-            var key = $"rl:{clientId}:{route}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds() / (long)_window.TotalSeconds}";
-            var count = await db.StringIncrementAsync(key);
-            if (count == 1)
-                await db.KeyExpireAsync(key, _window.Add(TimeSpan.FromSeconds(5)));
-            return count <= _maxRequests;
+            var windowStart = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / (long)_window.TotalSeconds;
+            var key = $"rl:{clientId}:{route}:{windowStart}";
+
+            var count = (long)await db.ScriptEvaluateAsync(Script, new RedisKey[] { key }, new RedisValue[] { (int)_window.TotalSeconds + 5 });
+
+            if (count > _maxRequests)
+            {
+                LedgerMetrics.RateLimiterRejections.Inc();
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Redis unavailable, failing open");
+            LedgerMetrics.RateLimiterFailOpen.Inc();
             return await _fallback.IsAllowedAsync(clientId, route, ct);
         }
     }
