@@ -1,8 +1,10 @@
 using System.Text;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
@@ -22,7 +24,6 @@ public class ConsumerTests : IAsyncLifetime
     private TransferService _service = null!;
     private RabbitMqConnectionProvider _connectionProvider = null!;
     private IModel _channel = null!;
-    private EventDispatcher _dispatcher = null!;
     private readonly List<string> _processedEvents = [];
 
     public ConsumerTests()
@@ -65,14 +66,6 @@ public class ConsumerTests : IAsyncLifetime
         var connection = await _connectionProvider.GetConnectionAsync();
         _channel = connection.CreateModel();
         RabbitMqTopology.DeclareTopology(_channel);
-
-        _dispatcher = new EventDispatcher(
-            LoggerFactory.Create(b => b.AddConsole()).CreateLogger<EventDispatcher>());
-        _dispatcher.Register("transfer.completed", async payload =>
-        {
-            _processedEvents.Add(payload);
-            await Task.CompletedTask;
-        });
     }
 
     public async Task DisposeAsync()
@@ -96,65 +89,105 @@ public class ConsumerTests : IAsyncLifetime
         return (alice, bob);
     }
 
-    private void PublishEvent(long eventId, string eventType, string payload)
+    private EventDispatcher CreateDispatcher(string eventType, Func<string, Task> handler)
+    {
+        var dispatcher = new EventDispatcher(NullLogger<EventDispatcher>.Instance);
+        dispatcher.Register(eventType, handler);
+        return dispatcher;
+    }
+
+    private ConsumerService CreateConsumer(EventDispatcher dispatcher, int maxRetryCount = 3)
+        => new(
+            NullLogger<ConsumerService>.Instance,
+            new TestServiceProvider(new DbContextFactoryWrapper(_postgres.GetConnectionString())),
+            _connectionProvider,
+            dispatcher,
+            Options.Create(new ConsumerOptions { MaxRetryCount = maxRetryCount, PrefetchCount = 10 }));
+
+    private void PublishEvent(long eventId, string eventType, string payload, int retryCount = 0)
     {
         var body = Encoding.UTF8.GetBytes(payload);
         var props = _channel.CreateBasicProperties();
         props.Persistent = true;
         props.MessageId = eventId.ToString();
         props.Type = eventType;
+        if (retryCount > 0)
+            props.Headers = new Dictionary<string, object> { [RabbitMqTopology.RetryCountHeader] = retryCount };
 
         _channel.BasicPublish(RabbitMqTopology.ExchangeName, eventType, mandatory: true, props, body);
     }
 
     [Fact]
-    public async Task Consumer_NewEvent_RecordsInProcessedEvents()
+    public async Task ConsumerService_NewEvent_RecordsInProcessedEvents()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
         var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
-        var payload = evt.Payload;
 
-        await ConsumerMessageAsync(evt.Id.ToString(), "transfer.completed", payload);
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", _ => Task.CompletedTask));
+        await consumer.StartAsync(CancellationToken.None);
 
-        var processed = await _db.ConsumerProcessedEvents
-            .FirstOrDefaultAsync(e => e.EventId == evt.Id && e.ConsumerName == "wallet-consumer");
+        PublishEvent(evt.Id, "transfer.completed", evt.Payload);
 
-        processed.Should().NotBeNull();
-        processed!.EventId.Should().Be(evt.Id);
-        processed.ConsumerName.Should().Be("wallet-consumer");
+        var processed = await WaitForConditionAsync(async () =>
+            await _db.ConsumerProcessedEvents.AnyAsync(e => e.EventId == evt.Id && e.ConsumerName == "wallet-consumer"),
+            TimeSpan.FromSeconds(10));
+        processed.Should().BeTrue();
+
+        await consumer.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task Consumer_DuplicateEvent_ProcessesOnce()
+    public async Task ConsumerService_DuplicateEvent_ProcessesOnce()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
         var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
-        await ConsumerMessageAsync(evt.Id.ToString(), "transfer.completed", evt.Payload);
-        await ConsumerMessageAsync(evt.Id.ToString(), "transfer.completed", evt.Payload);
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", async payload =>
+        {
+            _processedEvents.Add(payload);
+            await Task.CompletedTask;
+        }));
+        await consumer.StartAsync(CancellationToken.None);
 
+        PublishEvent(evt.Id, "transfer.completed", evt.Payload);
+        PublishEvent(evt.Id, "transfer.completed", evt.Payload);
+
+        var processed = await WaitForConditionAsync(() => Task.FromResult(_processedEvents.Count == 1), TimeSpan.FromSeconds(10));
+        processed.Should().BeTrue();
+
+        await Task.Delay(500);
         _processedEvents.Should().HaveCount(1);
+        (await _db.ConsumerProcessedEvents.CountAsync(e => e.EventId == evt.Id)).Should().Be(1);
+
+        await consumer.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task Consumer_UnknownEventType_AcksWithoutProcessing()
+    public async Task ConsumerService_UnknownEventType_AcksWithoutProcessing()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
         var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
-        await ConsumerMessageAsync(evt.Id.ToString(), "unknown.event", evt.Payload);
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", async payload =>
+        {
+            _processedEvents.Add(payload);
+            await Task.CompletedTask;
+        }));
+        await consumer.StartAsync(CancellationToken.None);
+
+        PublishEvent(evt.Id, "unknown.event", evt.Payload);
+        await Task.Delay(500);
 
         _processedEvents.Should().BeEmpty();
+
+        await consumer.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task Consumer_MultipleEvents_AllProcessed()
+    public async Task ConsumerService_MultipleEvents_AllProcessed()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
 
@@ -166,35 +199,74 @@ public class ConsumerTests : IAsyncLifetime
         var e2 = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == t2.Id);
         var e3 = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == t3.Id);
 
-        await ConsumerMessageAsync(e1.Id.ToString(), "transfer.completed", e1.Payload);
-        await ConsumerMessageAsync(e2.Id.ToString(), "transfer.completed", e2.Payload);
-        await ConsumerMessageAsync(e3.Id.ToString(), "transfer.completed", e3.Payload);
-
-        _processedEvents.Should().HaveCount(3);
-    }
-
-    private async Task ConsumerMessageAsync(string messageId, string eventType, string payload)
-    {
-        var options = new DbContextOptionsBuilder<WalletDbContext>()
-            .UseNpgsql(_postgres.GetConnectionString())
-            .Options;
-
-        await using var db = new WalletDbContext(options);
-        await using var tx = await db.Database.BeginTransactionAsync();
-
-        var existing = await db.ConsumerProcessedEvents
-            .AnyAsync(e => e.EventId == long.Parse(messageId) && e.ConsumerName == "wallet-consumer");
-
-        if (existing)
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", async payload =>
         {
-            await tx.CommitAsync();
-            return;
-        }
+            _processedEvents.Add(payload);
+            await Task.CompletedTask;
+        }));
+        await consumer.StartAsync(CancellationToken.None);
 
-        await _dispatcher.DispatchAsync(eventType, payload);
+        PublishEvent(e1.Id, "transfer.completed", e1.Payload);
+        PublishEvent(e2.Id, "transfer.completed", e2.Payload);
+        PublishEvent(e3.Id, "transfer.completed", e3.Payload);
 
-        db.ConsumerProcessedEvents.Add(ConsumerProcessedEvent.Create(long.Parse(messageId), "wallet-consumer"));
-        await db.SaveChangesAsync();
-        await tx.CommitAsync();
+        var processed = await WaitForConditionAsync(() => Task.FromResult(_processedEvents.Count == 3), TimeSpan.FromSeconds(10));
+        processed.Should().BeTrue();
+
+        await consumer.StopAsync(CancellationToken.None);
     }
+
+    [Fact]
+    public async Task ConsumerService_PoisonMessage_GoesToDlq()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
+
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", _ => throw new InvalidOperationException("poison")));
+        await consumer.StartAsync(CancellationToken.None);
+
+        PublishEvent(evt.Id, "transfer.completed", evt.Payload, retryCount: 3);
+
+        var deadLettered = await WaitForConditionAsync(
+            () => Task.FromResult(_channel.MessageCount(RabbitMqTopology.DlqName) >= 1),
+            TimeSpan.FromSeconds(15));
+        deadLettered.Should().BeTrue("a poison message should reach the DLQ");
+
+        (await _db.ConsumerProcessedEvents.CountAsync(e => e.EventId == evt.Id)).Should().Be(0);
+
+        await consumer.StopAsync(CancellationToken.None);
+    }
+
+    private static async Task<bool> WaitForConditionAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var start = DateTimeOffset.UtcNow;
+        while (DateTimeOffset.UtcNow - start < timeout)
+        {
+            if (await condition())
+                return true;
+            await Task.Delay(100);
+        }
+        return false;
+    }
+}
+
+public class TestServiceProvider(IDbContextFactory<WalletDbContext> factory) : IServiceProvider, IServiceScopeFactory
+{
+    public IServiceScope CreateScope() => new TestScope(factory);
+
+    public object? GetService(Type serviceType)
+    {
+        if (serviceType == typeof(IServiceScopeFactory))
+            return this;
+        if (serviceType == typeof(WalletDbContext))
+            return factory.CreateDbContext();
+        return null;
+    }
+}
+
+public class TestScope(IDbContextFactory<WalletDbContext> factory) : IServiceScope
+{
+    public IServiceProvider ServiceProvider { get; } = new TestServiceProvider(factory);
+    public void Dispose() { }
 }

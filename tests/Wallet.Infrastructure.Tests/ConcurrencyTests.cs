@@ -99,19 +99,22 @@ public class ConcurrencyTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 100000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 100000);
 
-        var task1 = _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
-        var task2 = _service.ExecuteAsync(TransferType.Transfer, bob.Id, alice.Id, "GHS", 10);
+        for (var i = 0; i < 200; i++)
+        {
+            var task1 = _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
+            var task2 = _service.ExecuteAsync(TransferType.Transfer, bob.Id, alice.Id, "GHS", 10);
 
-        await Task.WhenAll(task1, task2);
+            await Task.WhenAll(task1, task2);
+        }
 
         var aliceBalance = await _db.Wallets.Where(w => w.Id == alice.Id).Select(w => w.Balance).FirstAsync();
         var bobBalance = await _db.Wallets.Where(w => w.Id == bob.Id).Select(w => w.Balance).FirstAsync();
 
-        aliceBalance.Should().Be(1000);
-        bobBalance.Should().Be(1000);
+        aliceBalance.Should().Be(100000);
+        bobBalance.Should().Be(100000);
     }
 
     [Fact]
