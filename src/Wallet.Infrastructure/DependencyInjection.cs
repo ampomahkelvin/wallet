@@ -46,6 +46,7 @@ public static class DependencyInjection
         });
         services.Configure<RelayOptions>(config.GetSection("Relay"));
         services.AddHostedService<RelayService>();
+        services.Configure<ConsumerOptions>(config.GetSection("Consumer"));
         services.AddHostedService<ConsumerService>();
 
         var redisHost = config.GetConnectionString("Redis") ?? "localhost:6379";

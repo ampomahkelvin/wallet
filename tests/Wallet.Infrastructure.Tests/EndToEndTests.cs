@@ -152,6 +152,28 @@ public class EndToEndTests : IAsyncLifetime
 
         var publishedCount = await _db.OutboxEvents.CountAsync(e => e.PublishedAt != null);
         publishedCount.Should().Be(outboxCount);
+
+        var dispatcher = new EventDispatcher(NullLogger<EventDispatcher>.Instance);
+        dispatcher.Register("transfer.completed", _ => Task.CompletedTask);
+        dispatcher.Register("deposit.completed", _ => Task.CompletedTask);
+        dispatcher.Register("withdrawal.completed", _ => Task.CompletedTask);
+        dispatcher.Register("transfer.reversed", _ => Task.CompletedTask);
+
+        var consumer = new ConsumerService(
+            NullLogger<ConsumerService>.Instance,
+            new TestServiceProvider(new DbContextFactoryWrapper(_postgres.GetConnectionString())),
+            _connectionProvider,
+            dispatcher,
+            Microsoft.Extensions.Options.Options.Create(new ConsumerOptions { MaxRetryCount = 3, PrefetchCount = 100 }));
+        await consumer.StartAsync(CancellationToken.None);
+
+        var converged = await WaitForConditionAsync(
+            async () => await _db.ConsumerProcessedEvents.CountAsync() >= publishedCount,
+            TimeSpan.FromSeconds(60));
+
+        converged.Should().BeTrue("consumer should process every published event");
+
+        await consumer.StopAsync(CancellationToken.None);
     }
 
     private static async Task<bool> WaitForConditionAsync(Func<Task<bool>> condition, TimeSpan timeout)
