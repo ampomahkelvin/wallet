@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Wallet.Api.Authentication;
 using Wallet.Api.Contracts;
 using Wallet.Domain;
 using Wallet.Infrastructure.Accounts;
@@ -8,6 +10,7 @@ using Wallet.Infrastructure.Transfers;
 namespace Wallet.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/wallets")]
 public class WalletsController(
     IAccountService wallets,
@@ -17,7 +20,7 @@ public class WalletsController(
     [HttpPost]
     public async Task<ActionResult<WalletResponse>> Open(OpenWalletRequest request, CancellationToken ct)
     {
-        var clientId = GetClientId();
+        var clientId = User.GetClientId();
         var key = GetIdempotencyKey();
         var hash = RequestHasher.Hash("POST", "/api/wallets", request);
 
@@ -25,8 +28,8 @@ public class WalletsController(
             clientId, key, hash,
             async db =>
             {
-                var wallet = await wallets.OpenInTransactionAsync(db, request.OwnerId, request.Currency, ct);
-                return (ToWalletResponse(wallet), (short)StatusCodes.Status201Created);
+                var w = await wallets.OpenInTransactionAsync(db, clientId, request.Currency, ct);
+                return (ToWalletResponse(w), (short)StatusCodes.Status201Created);
             },
             ct);
 
@@ -38,14 +41,15 @@ public class WalletsController(
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<WalletResponse>> Get(Guid id, CancellationToken ct)
     {
-        var w = await wallets.GetAsync(id, ct);
+        var clientId = User.GetClientId();
+        var w = await wallets.GetAsync(id, clientId, ct);
         return w is null ? NotFound() : ToWalletResponse(w);
     }
 
     [HttpPost("{id:guid}/deposits")]
     public async Task<ActionResult<TransferResponse>> Deposit(Guid id, DepositRequest request, CancellationToken ct)
     {
-        var clientId = GetClientId();
+        var clientId = User.GetClientId();
         var key = GetIdempotencyKey();
         var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/deposits", request);
 
@@ -53,7 +57,7 @@ public class WalletsController(
             clientId, key, hash,
             async db =>
             {
-                var wallet = await wallets.GetAsync(db, id, ct)
+                var wallet = await wallets.GetAsync(db, id, clientId, ct)
                     ?? throw new NotFoundException("Wallet not found.");
 
                 var systemWallet = await wallets.GetSystemWalletAsync(db, wallet.Currency, ct)
@@ -66,6 +70,7 @@ public class WalletsController(
                     wallet.Id,
                     wallet.Currency,
                     request.Amount,
+                    clientId,
                     null,
                     ct);
 
@@ -81,7 +86,7 @@ public class WalletsController(
     [HttpPost("{id:guid}/withdrawals")]
     public async Task<ActionResult<TransferResponse>> Withdraw(Guid id, WithdrawalRequest request, CancellationToken ct)
     {
-        var clientId = GetClientId();
+        var clientId = User.GetClientId();
         var key = GetIdempotencyKey();
         var hash = RequestHasher.Hash("POST", $"/api/wallets/{id}/withdrawals", request);
 
@@ -89,7 +94,7 @@ public class WalletsController(
             clientId, key, hash,
             async db =>
             {
-                var wallet = await wallets.GetAsync(db, id, ct)
+                var wallet = await wallets.GetAsync(db, id, clientId, ct)
                     ?? throw new NotFoundException("Wallet not found.");
 
                 var systemWallet = await wallets.GetSystemWalletAsync(db, wallet.Currency, ct)
@@ -102,6 +107,7 @@ public class WalletsController(
                     systemWallet.Id,
                     wallet.Currency,
                     request.Amount,
+                    clientId,
                     null,
                     ct);
 
@@ -121,6 +127,10 @@ public class WalletsController(
         [FromQuery] int limit = 50,
         CancellationToken ct = default)
     {
+        var clientId = User.GetClientId();
+        var w = await wallets.GetAsync(id, clientId, ct);
+        if (w is null) return NotFound();
+
         var entries = await transfers.GetWalletEntriesAsync(id, before, limit, ct);
 
         var hasMore = entries.Count > limit;
@@ -135,12 +145,9 @@ public class WalletsController(
         return response;
     }
 
-    private string GetClientId() =>
-        Request.Headers["X-Client-Id"].FirstOrDefault() ?? "default";
-
     private string GetIdempotencyKey() =>
         Request.Headers["Idempotency-Key"].FirstOrDefault()
-        ?? throw new DomainException("Idempotency-Key header is required.");
+        ?? throw new BadRequestException("Idempotency-Key header is required.");
 
     private static WalletResponse ToWalletResponse(Wallet.Domain.Wallet w) =>
         new(w.Id, w.OwnerId ?? "", w.Currency, w.Balance);

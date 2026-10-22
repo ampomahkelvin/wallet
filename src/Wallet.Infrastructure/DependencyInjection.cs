@@ -35,6 +35,7 @@ public static class DependencyInjection
         services.AddSingleton(sp => new RabbitMqConnectionProvider(
             rabbitMqHost,
             sp.GetRequiredService<ILogger<RabbitMqConnectionProvider>>()));
+        services.AddSingleton<IApiKeyProvider>(_ => new ApiKeyProvider(config));
         services.AddSingleton<EventDispatcher>(sp =>
         {
             var dispatcher = new EventDispatcher(sp.GetRequiredService<ILogger<EventDispatcher>>());

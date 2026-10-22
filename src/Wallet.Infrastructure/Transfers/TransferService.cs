@@ -14,26 +14,28 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         Guid destinationWalletId,
         string currency,
         long amount,
+        string clientId,
         Guid? reversesTransferId = null,
         CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-        var result = await ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, ct);
+        var result = await ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, clientId, ct);
         await tx.CommitAsync(ct);
         return result;
     }
 
-    public Task<Transfer> ExecuteInTransactionAsync(
+    public async Task<Transfer> ExecuteInTransactionAsync(
         WalletDbContext db,
         TransferType type,
         Guid sourceWalletId,
         Guid destinationWalletId,
         string currency,
         long amount,
+        string clientId,
         Guid? reversesTransferId = null,
         CancellationToken ct = default)
-        => ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, ct);
+        => await ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, clientId, ct);
 
     private async Task<Transfer> ExecuteCoreAsync(
         WalletDbContext db,
@@ -43,6 +45,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         string currency,
         long amount,
         Guid? reversesTransferId,
+        string clientId,
         CancellationToken ct)
     {
         if (amount <= 0)
@@ -70,6 +73,14 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             ?? throw new NotFoundException("Source wallet not found.");
         var dest = wallets.Find(w => w.Id == destinationWalletId)
             ?? throw new NotFoundException("Destination wallet not found.");
+
+        // The system wallet may only be debited by deposits. Allowing it as a source
+        // for transfers or withdrawals would let any authenticated client mint funds.
+        if (source.Kind == WalletKind.System && type != TransferType.Deposit)
+            throw new ForbiddenException("System wallets can only be used as a source for deposits.");
+
+        if (source.Kind == WalletKind.User && source.OwnerId != clientId)
+            throw new ForbiddenException("Source wallet does not belong to the authenticated client");
 
         if (source.Currency != currency || dest.Currency != currency)
             throw new ValidationException("Currency mismatch.");
@@ -121,7 +132,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             .FirstOrDefaultAsync(t => t.Id == id, ct);
     }
 
-    public async Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default)
+    public async Task<Transfer> ReverseAsync(Guid transferId, string clientId, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         var original = await db.Transfers
@@ -147,11 +158,12 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             original.SourceWalletId,
             original.Currency,
             original.Amount,
+            clientId,
             transferId,
             ct);
     }
 
-    public async Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, CancellationToken ct = default)
+    public async Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, string clientId, CancellationToken ct = default)
     {
         var original = await db.Transfers
             .AsNoTracking()
@@ -169,6 +181,14 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         if (alreadyReversed)
             throw new ConflictException("Transfer has already been reversed.");
 
+        // The source of a reversal is the destination of the original transfer
+        var destWallet = await db.Wallets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == original.DestinationWalletId, ct);
+
+        if (destWallet is null || destWallet.Kind == WalletKind.System || destWallet.OwnerId != clientId)
+            throw new ForbiddenException("Destination wallet does not belong to the authenticated client");
+
         return await ExecuteCoreAsync(
             db,
             TransferType.Reversal,
@@ -177,6 +197,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
             original.Currency,
             original.Amount,
             transferId,
+            clientId,
             ct);
     }
 

@@ -60,8 +60,8 @@ public class TransferServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         return (alice, bob);
     }
@@ -72,7 +72,7 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         transfer.Entries.Should().HaveCount(2);
         transfer.Entries.Sum(e => e.Amount).Should().Be(0);
@@ -92,7 +92,7 @@ public class TransferServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         await Assert.ThrowsAsync<InsufficientFundsException>(() =>
-            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100));
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!));
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class TransferServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100));
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!));
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class TransferServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
-            _service.ExecuteAsync(TransferType.Transfer, alice.Id, Guid.NewGuid(), "GHS", 100));
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, Guid.NewGuid(), "GHS", 100, alice.OwnerId!));
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 0));
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 0, alice.OwnerId!));
     }
 
     [Fact]
@@ -135,7 +135,38 @@ public class TransferServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            _service.ExecuteAsync(TransferType.Transfer, alice.Id, alice.Id, "GHS", 100));
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, alice.Id, "GHS", 100, alice.OwnerId!));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TransferFromSystemWallet_ThrowsForbidden()
+    {
+        var (alice, _) = await CreateFundedWalletsAsync();
+        var systemWallet = await _db.Wallets.AsNoTracking().FirstAsync(w => w.Kind == WalletKind.System);
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ExecuteAsync(TransferType.Transfer, systemWallet.Id, alice.Id, "GHS", 100, alice.OwnerId!));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FromWalletOwnedByAnotherClient_ThrowsForbidden()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, bob.OwnerId!));
+    }
+
+    [Fact]
+    public async Task ReverseAsync_ByOriginalSourceOwner_ThrowsForbidden()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+
+        var transfer = await _service.ExecuteAsync(
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ReverseAsync(transfer.Id, alice.OwnerId!));
     }
 
     [Fact]
@@ -144,9 +175,9 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
-        var reversal = await _service.ReverseAsync(transfer.Id);
+        var reversal = await _service.ReverseAsync(transfer.Id, bob.OwnerId!);
 
         reversal.Type.Should().Be(TransferType.Reversal);
         reversal.ReversesTransferId.Should().Be(transfer.Id);
@@ -159,10 +190,10 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-        await _service.ReverseAsync(transfer.Id);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+        await _service.ReverseAsync(transfer.Id, bob.OwnerId!);
 
-        await Assert.ThrowsAsync<ConflictException>(() => _service.ReverseAsync(transfer.Id));
+        await Assert.ThrowsAsync<ConflictException>(() => _service.ReverseAsync(transfer.Id, bob.OwnerId!));
     }
 
     [Fact]
@@ -171,10 +202,10 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-        var reversal = await _service.ReverseAsync(transfer.Id);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+        var reversal = await _service.ReverseAsync(transfer.Id, bob.OwnerId!);
 
-        await Assert.ThrowsAsync<ValidationException>(() => _service.ReverseAsync(reversal.Id));
+        await Assert.ThrowsAsync<ValidationException>(() => _service.ReverseAsync(reversal.Id, bob.OwnerId!));
     }
 
     [Fact]
@@ -183,7 +214,7 @@ public class TransferServiceTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         var fetched = await _service.GetAsync(transfer.Id);
         fetched.Should().NotBeNull();

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Wallet.Infrastructure.Persistence;
@@ -11,12 +10,14 @@ namespace Wallet.Api.Tests;
 public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
 {
     private readonly WalletApiFactory _factory;
-    private readonly HttpClient _client;
+    private readonly ApiTestClient _api;
+    private readonly string _apiKey;
 
     public ObservabilityApiTests(WalletApiFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _api = new ApiTestClient(factory);
+        _apiKey = _api.CreateKey(ApiTestClient.NewClientId("obs"));
     }
 
     [Fact]
@@ -24,7 +25,7 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
     {
         await SeedTransferAsync();
 
-        var response = await _client.GetAsync("/metrics");
+        var response = await _api.GetAsync("/metrics");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadAsStringAsync();
@@ -34,7 +35,7 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
     [Fact]
     public async Task GetHealthDeep_ReturnsComponentStatus()
     {
-        var response = await _client.GetAsync("/health/deep");
+        var response = await _api.GetAsync("/health/deep");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadAsStringAsync();
@@ -48,7 +49,7 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
     {
         await SeedTransferAsync();
 
-        var response = await _client.GetAsync("/admin/reconcile");
+        var response = await _api.GetAsync("/admin/reconcile", _apiKey);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<ReconcileResponse>();
@@ -59,8 +60,8 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
     [Fact]
     public async Task GetAdminReconcile_DetectsCorruptedBalance()
     {
-        var walletId = await CreateWalletAsync();
-        await DepositAsync(walletId, 1000);
+        var (walletId, walletKey) = await CreateWalletAsync();
+        await DepositAsync(walletId, 1000, walletKey);
 
         using (var db = _factory.CreateDbContext())
         {
@@ -68,7 +69,7 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
                 UPDATE wallets SET ""Balance"" = ""Balance"" - 1 WHERE ""Id"" = {walletId}");
         }
 
-        var response = await _client.GetAsync("/admin/reconcile");
+        var response = await _api.GetAsync("/admin/reconcile", _apiKey);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<ReconcileResponse>();
         body!.Violations.Should().NotBeEmpty();
@@ -81,57 +82,39 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
         }
     }
 
+    [Fact]
+    public async Task GetAdminReconcile_WithoutApiKey_Returns401()
+    {
+        var response = await _api.GetAsync("/admin/reconcile");
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     private async Task SeedTransferAsync()
     {
-        var alice = await CreateWalletAsync();
-        var bob = await CreateWalletAsync();
-        await DepositAsync(alice, 1000);
-        await DepositAsync(bob, 1000);
-        await TransferAsync(alice, bob, 100);
+        var (alice, aliceKey) = await CreateWalletAsync();
+        var (bob, bobKey) = await CreateWalletAsync();
+        await DepositAsync(alice, 1000, aliceKey);
+        await DepositAsync(bob, 1000, bobKey);
+        await TransferAsync(alice, bob, aliceKey);
     }
 
-    private async Task<Guid> CreateWalletAsync()
+    private async Task<(Guid WalletId, string ApiKey)> CreateWalletAsync()
     {
-        var response = await PostJsonAsync("/api/wallets", new
-        {
-            ownerId = $"obs-{Guid.NewGuid():N}",
-            currency = "GHS"
-        });
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var body = await response.Content.ReadFromJsonAsync<WalletDto>();
-        return body!.Id;
+        var (walletId, _, apiKey) = await _api.CreateWalletAsync("obs");
+        return (walletId, apiKey);
     }
 
-    private async Task DepositAsync(Guid walletId, long amount)
-    {
-        var response = await PostJsonAsync($"/api/wallets/{walletId}/deposits", new { amount });
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
+    private Task DepositAsync(Guid walletId, long amount, string apiKey)
+        => _api.DepositAsync(walletId, amount, apiKey);
 
-    private async Task TransferAsync(Guid source, Guid destination, long amount)
-    {
-        var response = await PostJsonAsync("/api/transfers", new
+    private Task<HttpResponseMessage> TransferAsync(Guid source, Guid destination, string sourceApiKey)
+        => _api.PostJsonAsync("/api/transfers", new
         {
             sourceWalletId = source,
             destinationWalletId = destination,
             currency = "GHS",
-            amount
-        });
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
-    private async Task<HttpResponseMessage> PostJsonAsync(string url, object payload)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = JsonContent.Create(payload)
-        };
-        request.Headers.Add("X-Client-Id", "obs-test");
-        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        return await _client.SendAsync(request);
-    }
-
-    private sealed record WalletDto(Guid Id, string OwnerId, string Currency, long Balance);
+            amount = 100
+        }, sourceApiKey, Guid.NewGuid().ToString());
 
     private sealed record ReconcileResponse(List<Guid> Violations, string Status);
 }

@@ -48,7 +48,10 @@
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=wallet;Username=wallet;Password=wallet"
       ConnectionStrings__RabbitMQ: "amqp://guest:guest@rabbitmq:5672/"
       ConnectionStrings__Redis: "redis:6379"
+      ApiKeys__dev-key-client-1: "client-1"
+      ApiKeys__dev-key-client-2: "client-2"
       Relay__PollIntervalMs: "5000"
+      RateLimiter__MaxRequests: "${RATE_LIMIT_MAX:-100}"
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication;
+using Wallet.Api.Authentication;
 using Wallet.Api.Middleware;
 using Wallet.Infrastructure;
 
@@ -12,6 +14,10 @@ public static class ServiceCollectionExtensions
         services.AddOpenApi();
         services.AddProblemDetails();
         services.AddExceptionHandler<GlobalExceptionHandler>();
+        services.AddAuthentication(ApiKeyAuthenticationDefaults.Scheme)
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+                ApiKeyAuthenticationDefaults.Scheme, null);
+        services.AddAuthorization();
 
         services.AddInfrastructure(config);
 

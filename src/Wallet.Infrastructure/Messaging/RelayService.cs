@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,7 @@ public class RelayService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RabbitMqConnectionProvider _connectionProvider;
     private readonly RelayOptions _options;
+    private readonly ConcurrentDictionary<string, byte> _returnedMessages = new(StringComparer.Ordinal);
     private IModel? _channel;
 
     public RelayService(
@@ -42,6 +44,9 @@ public class RelayService : BackgroundService
 
     private void OnBasicReturn(object? sender, BasicReturnEventArgs e)
     {
+        if (e.BasicProperties.MessageId is { } messageId)
+            _returnedMessages[messageId] = 0;
+
         _logger.LogWarning(
             "Message returned: reply code {ReplyCode}, exchange {Exchange}, routing key {RoutingKey}",
             e.ReplyCode, e.Exchange, e.RoutingKey);
@@ -102,11 +107,13 @@ public class RelayService : BackgroundService
             {
                 var body = Encoding.UTF8.GetBytes(evt.Payload);
 
+                var messageId = evt.Id.ToString();
                 var props = channel.CreateBasicProperties();
                 props.Persistent = true;
-                props.MessageId = evt.Id.ToString();
+                props.MessageId = messageId;
                 props.Type = evt.Type;
 
+                _returnedMessages.TryRemove(messageId, out _);
                 channel.BasicPublish(
                     RabbitMqTopology.ExchangeName,
                     evt.Type,
@@ -115,9 +122,12 @@ public class RelayService : BackgroundService
                     body: body);
 
                 var confirmed = channel.WaitForConfirms(TimeSpan.FromSeconds(5));
-                if (!confirmed)
+                var returned = _returnedMessages.TryRemove(messageId, out _);
+                if (!confirmed || returned)
                 {
-                    _logger.LogWarning("Publish not confirmed for outbox event {EventId}; leaving unpublished", evt.Id);
+                    _logger.LogWarning(
+                        "Publish not confirmed or unroutable for outbox event {EventId}; leaving unpublished",
+                        evt.Id);
                     continue;
                 }
 

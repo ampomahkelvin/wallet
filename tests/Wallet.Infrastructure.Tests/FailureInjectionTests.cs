@@ -58,8 +58,8 @@ public class FailureInjectionTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         var transferCountBefore = await _db.Transfers.CountAsync();
 
@@ -105,12 +105,12 @@ public class FailureInjectionTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-        await _service.ReverseAsync(transfer.Id);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+        await _service.ReverseAsync(transfer.Id, bob.OwnerId!);
 
         await Assert.ThrowsAnyAsync<PostgresException>(async () =>
         {

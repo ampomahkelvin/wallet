@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using System.Security.Claims;
 using System.Text.Json;
 using Wallet.Infrastructure.Observability;
 using Wallet.Infrastructure.RateLimiting;
@@ -16,7 +17,9 @@ public class RateLimitingMiddleware(RequestDelegate next, IRateLimiter rateLimit
             return;
         }
 
-        var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "default";
+        var clientId = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? context.Connection.RemoteIpAddress?.ToString()
+            ?? "anonymous";
         var route = NormalizeRoute(context.Request.Path);
 
         var allowed = await rateLimiter.IsAllowedAsync(clientId, route);

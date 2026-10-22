@@ -64,7 +64,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
                 throw new InvalidOperationException("injected fault after write");
             }));
 
@@ -83,7 +83,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 var t = await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
                 return (new TestResponse(t.Id), (short)201);
             });
 
@@ -92,7 +92,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 var t = await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
                 return (new TestResponse(t.Id), (short)201);
             });
 
@@ -117,7 +117,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 var t = await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
                 return (new TestResponse(t.Id), (short)201);
             });
 
@@ -126,7 +126,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 var t = await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 200);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 200, alice.OwnerId!);
                 return (new TestResponse(t.Id), (short)201);
             }));
     }
@@ -142,7 +142,7 @@ public class IdempotencyServiceTests : IAsyncLifetime
             async db =>
             {
                 var t = await _transfers.ExecuteInTransactionAsync(
-                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
                 return (new TestResponse(t.Id), (short)201);
             })));
 
@@ -158,8 +158,8 @@ public class IdempotencyServiceTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _transfers.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 10000);
-        await _transfers.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 10000);
+        await _transfers.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 10000, "test-client");
+        await _transfers.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 10000, "test-client");
 
         return (alice, bob);
     }

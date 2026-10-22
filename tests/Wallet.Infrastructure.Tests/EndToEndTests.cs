@@ -87,7 +87,7 @@ public class EndToEndTests : IAsyncLifetime
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
         foreach (var w in wallets)
         {
-            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 10000);
+            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 10000, w.OwnerId!);
         }
 
         var transferCountBefore = await _db.Transfers.CountAsync();
@@ -102,7 +102,7 @@ public class EndToEndTests : IAsyncLifetime
                 wallets[fromIdx].Id,
                 wallets[toIdx].Id,
                 "GHS",
-                10));
+                10, wallets[fromIdx].OwnerId!));
         }
 
         await Task.WhenAll(tasks);

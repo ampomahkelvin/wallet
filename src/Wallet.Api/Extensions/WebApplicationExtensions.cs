@@ -25,6 +25,8 @@ public static class WebApplicationExtensions
         app.UseExceptionHandler();
         app.UseHttpMetrics();
         app.UseMetricServer();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.UseMiddleware<RateLimitingMiddleware>();
         app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
         app.MapGet("/health/deep", async (
@@ -49,7 +51,7 @@ public static class WebApplicationExtensions
             var violations = await ReconciliationService.FindViolationsAsync(db);
             LedgerMetrics.InvariantViolations.Set(violations.Count);
             return Results.Ok(new { violations, status = violations.Count == 0 ? "ok" : "violations_detected" });
-        });
+        }).RequireAuthorization();
         app.MapControllers();
 
         return app;
