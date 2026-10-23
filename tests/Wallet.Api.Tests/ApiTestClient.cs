@@ -21,6 +21,8 @@ public sealed class ApiTestClient(WalletApiFactory factory)
 
     public string CreateKey(string clientId) => Keys.CreateKey(clientId);
 
+    public string CreateAdminKey(string clientId) => Keys.CreateAdminKey(clientId);
+
     public async Task<(Guid WalletId, string ClientId, string ApiKey)> CreateWalletAsync(
         string prefix,
         string? clientId = null)

@@ -8,6 +8,10 @@ public class ApiKeyProvider(IConfiguration configuration) : IApiKeyProvider
         configuration.GetSection("ApiKeys").Get<Dictionary<string, string>>()
         ?? new Dictionary<string, string>(StringComparer.Ordinal);
 
+    private readonly HashSet<string> _adminKeys = new(
+        configuration.GetSection("AdminApiKeys").Get<string[]>() ?? [],
+        StringComparer.Ordinal);
+
     public bool TryGetClientId(string apiKey, out string clientId)
     {
         if (string.IsNullOrEmpty(apiKey))
@@ -25,4 +29,7 @@ public class ApiKeyProvider(IConfiguration configuration) : IApiKeyProvider
         clientId = null!;
         return false;
     }
+
+    public bool IsAdmin(string apiKey)
+        => !string.IsNullOrEmpty(apiKey) && _adminKeys.Contains(apiKey);
 }

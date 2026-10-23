@@ -17,7 +17,8 @@ public static class ServiceCollectionExtensions
         services.AddAuthentication(ApiKeyAuthenticationDefaults.Scheme)
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationDefaults.Scheme, null);
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+            options.AddPolicy("Admin", policy => policy.RequireRole("admin")));
 
         services.AddInfrastructure(config);
 

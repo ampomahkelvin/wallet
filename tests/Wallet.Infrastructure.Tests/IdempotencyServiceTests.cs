@@ -132,6 +132,46 @@ public class IdempotencyServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HandleAsync_ExpiredKeyWithDifferentPayload_ReclaimsKey()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+        var hash1 = new byte[32];
+        var hash2 = new byte[32];
+        hash2[0] = 1;
+
+        var (first, _, _) = await _idempotency.HandleAsync(
+            "client-1", "expired-key", hash1,
+            async db =>
+            {
+                var t = await _transfers.ExecuteInTransactionAsync(
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+                return (new TestResponse(t.Id), (short)201);
+            });
+
+        await _db.Database.ExecuteSqlInterpolatedAsync($@"
+            UPDATE idempotency_keys
+            SET ""ExpiresAt"" = {DateTimeOffset.UtcNow.AddMinutes(-1)}
+            WHERE ""ClientId"" = 'client-1' AND ""Key"" = 'expired-key'");
+
+        var (second, status, replayed) = await _idempotency.HandleAsync(
+            "client-1", "expired-key", hash2,
+            async db =>
+            {
+                var t = await _transfers.ExecuteInTransactionAsync(
+                    db, TransferType.Transfer, alice.Id, bob.Id, "GHS", 200, alice.OwnerId!);
+                return (new TestResponse(t.Id), (short)201);
+            });
+
+        replayed.Should().BeFalse();
+        status.Should().Be(201);
+        second.Id.Should().NotBe(first.Id);
+
+        var stored = await _db.IdempotencyKeys.AsNoTracking()
+            .FirstAsync(k => k.ClientId == "client-1" && k.Key == "expired-key");
+        stored.RequestHash.Should().Equal(hash2);
+    }
+
+    [Fact]
     public async Task HandleAsync_50ParallelSameKey_ExecutesOnce()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();

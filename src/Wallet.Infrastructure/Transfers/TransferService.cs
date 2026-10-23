@@ -22,6 +22,7 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         var result = await ExecuteCoreAsync(db, type, sourceWalletId, destinationWalletId, currency, amount, reversesTransferId, clientId, ct);
         await tx.CommitAsync(ct);
+        LedgerMetrics.TransfersTotal.Inc();
         return result;
     }
 
@@ -119,7 +120,6 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
         db.OutboxEvents.Add(outboxEvent);
 
         await db.SaveChangesAsync(ct);
-        LedgerMetrics.TransfersTotal.Inc();
         return transfer;
     }
 
@@ -135,32 +135,11 @@ public class TransferService(IDbContextFactory<WalletDbContext> contextFactory) 
     public async Task<Transfer> ReverseAsync(Guid transferId, string clientId, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
-        var original = await db.Transfers
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == transferId, ct);
-
-        if (original is null)
-            throw new NotFoundException("Transfer not found.");
-
-        if (original.Type == TransferType.Reversal)
-            throw new ValidationException("A reversal cannot be reversed.");
-
-        var alreadyReversed = await db.Transfers
-            .AnyAsync(t => t.ReversesTransferId == transferId, ct);
-
-        if (alreadyReversed)
-            throw new ConflictException("Transfer has already been reversed.");
-
-        return await ExecuteInTransactionAsync(
-            db,
-            TransferType.Reversal,
-            original.DestinationWalletId,
-            original.SourceWalletId,
-            original.Currency,
-            original.Amount,
-            clientId,
-            transferId,
-            ct);
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        var result = await ReverseInTransactionAsync(db, transferId, clientId, ct);
+        await tx.CommitAsync(ct);
+        LedgerMetrics.TransfersTotal.Inc();
+        return result;
     }
 
     public async Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, string clientId, CancellationToken ct = default)

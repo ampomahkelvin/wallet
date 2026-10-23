@@ -51,7 +51,7 @@ public static class WebApplicationExtensions
             var violations = await ReconciliationService.FindViolationsAsync(db);
             LedgerMetrics.InvariantViolations.Set(violations.Count);
             return Results.Ok(new { violations, status = violations.Count == 0 ? "ok" : "violations_detected" });
-        }).RequireAuthorization();
+        }).RequireAuthorization("Admin");
         app.MapControllers();
 
         return app;
