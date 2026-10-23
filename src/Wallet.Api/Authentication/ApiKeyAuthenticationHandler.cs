@@ -26,11 +26,14 @@ public class ApiKeyAuthenticationHandler(
         if (!apiKeys.TryGetClientId(apiKey, out var clientId) || string.IsNullOrWhiteSpace(clientId))
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key."));
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
-            new Claim(ClaimTypes.NameIdentifier, clientId),
-            new Claim(ClaimTypes.Name, clientId)
+            new(ClaimTypes.NameIdentifier, clientId),
+            new(ClaimTypes.Name, clientId)
         };
+
+        if (apiKeys.IsAdmin(apiKey))
+            claims.Add(new Claim(ClaimTypes.Role, "admin"));
 
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
         var ticket = new AuthenticationTicket(principal, Scheme.Name);

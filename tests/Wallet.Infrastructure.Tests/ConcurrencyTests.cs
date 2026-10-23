@@ -118,7 +118,7 @@ public class ConcurrencyTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ExecuteAsync_ParallelSameKey_ExecutesOnce()
+    public async Task ExecuteAsync_50ParallelTransfers_AllSucceed()
     {
         var alice = Wallet.Domain.Wallet.CreateUser("alice", "GHS");
         var bob = Wallet.Domain.Wallet.CreateUser("bob", "GHS");

@@ -5,6 +5,7 @@ using Wallet.Api.Contracts;
 using Wallet.Domain;
 using Wallet.Infrastructure.Accounts;
 using Wallet.Infrastructure.Idempotency;
+using Wallet.Infrastructure.Observability;
 using Wallet.Infrastructure.Transfers;
 
 namespace Wallet.Api.Controllers;
@@ -78,7 +79,10 @@ public class WalletsController(
             },
             ct);
 
-        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+        if (replayed)
+            Response.Headers.Append("Idempotent-Replayed", "true");
+        else
+            LedgerMetrics.TransfersTotal.Inc();
 
         return StatusCode(status, response);
     }
@@ -115,7 +119,10 @@ public class WalletsController(
             },
             ct);
 
-        if (replayed) Response.Headers.Append("Idempotent-Replayed", "true");
+        if (replayed)
+            Response.Headers.Append("Idempotent-Replayed", "true");
+        else
+            LedgerMetrics.TransfersTotal.Inc();
 
         return StatusCode(status, response);
     }

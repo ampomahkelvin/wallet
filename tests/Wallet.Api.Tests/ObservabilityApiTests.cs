@@ -17,7 +17,7 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
     {
         _factory = factory;
         _api = new ApiTestClient(factory);
-        _apiKey = _api.CreateKey(ApiTestClient.NewClientId("obs"));
+        _apiKey = _api.CreateAdminKey(ApiTestClient.NewClientId("obs-admin"));
     }
 
     [Fact]
@@ -80,6 +80,16 @@ public class ObservabilityApiTests : IClassFixture<WalletApiFactory>
             await db.Database.ExecuteSqlInterpolatedAsync($@"
                 UPDATE wallets SET ""Balance"" = ""Balance"" + 1 WHERE ""Id"" = {walletId}");
         }
+    }
+
+    [Fact]
+    public async Task GetAdminReconcile_WithNonAdminKey_Returns403()
+    {
+        var nonAdminKey = _api.CreateKey(ApiTestClient.NewClientId("obs-user"));
+
+        var response = await _api.GetAsync("/admin/reconcile", nonAdminKey);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]

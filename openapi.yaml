@@ -238,6 +238,27 @@ paths:
       responses:
         '200':
           description: Service health details
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+  /admin/reconcile:
+    get:
+      summary: Reconcile ledger invariants (admin API key required)
+      responses:
+        '200':
+          description: Reconciliation result
+        '401':
+          description: Missing or invalid API key
+        '403':
+          description: API key is not an admin key
 components:
   securitySchemes:
     ApiKeyAuth:

@@ -126,9 +126,9 @@ public class RelayService : BackgroundService
                 if (!confirmed || returned)
                 {
                     _logger.LogWarning(
-                        "Publish not confirmed or unroutable for outbox event {EventId}; leaving unpublished",
+                        "Publish not confirmed or unroutable for outbox event {EventId}; stopping batch to preserve order",
                         evt.Id);
-                    continue;
+                    break;
                 }
 
                 evt.MarkPublished();
@@ -136,7 +136,8 @@ public class RelayService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to publish outbox event {EventId}; leaving unpublished", evt.Id);
+                _logger.LogWarning(ex, "Failed to publish outbox event {EventId}; stopping batch to preserve order", evt.Id);
+                break;
             }
         }
 

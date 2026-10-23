@@ -41,9 +41,6 @@ public class IdempotencyService(
             if (existing is null)
                 continue;
 
-            if (!existing.RequestHash.SequenceEqual(requestHash))
-                throw new IdempotencyKeyReusedException("Idempotency key reused with a different payload.");
-
             if (existing.ExpiresAt < DateTimeOffset.UtcNow)
             {
                 var reclaimed = await db.Database.ExecuteSqlInterpolatedAsync($@"
@@ -59,6 +56,9 @@ public class IdempotencyService(
 
                 continue;
             }
+
+            if (!existing.RequestHash.SequenceEqual(requestHash))
+                throw new IdempotencyKeyReusedException("Idempotency key reused with a different payload.");
 
             if (existing.ResponseBody is not null)
             {

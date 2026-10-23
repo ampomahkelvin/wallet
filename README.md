@@ -16,6 +16,8 @@ Client ──HTTP──► API (ASP.NET Core) ──► Redis (rate limiting, fa
 
 Correctness never depends on RabbitMQ or Redis: if the broker is down, transfers still succeed and events accumulate in the outbox; if Redis is down, rate limiting fails open.
 
+Consumer failures are republished to a retry queue, dead-lettered back to the main queue after a fixed 30-second delay, and moved to the DLQ after `Consumer:MaxRetryCount` attempts.
+
 ## Quick Start
 
 ```bash
@@ -37,17 +39,19 @@ docker compose up postgres rabbitmq redis
 dotnet run --project src/Wallet.Api
 ```
 
-The checked-in development keys are `dev-key-client-1` → `client-1` and
-`dev-key-client-2` → `client-2`. Override them with `ApiKeys__<key>` environment
-variables in any real deployment.
+The checked-in development keys are `dev-key-client-1` → `client-1`,
+`dev-key-client-2` → `client-2`, and `dev-admin-key` → `admin`. Override them
+with `ApiKeys__<key>` environment variables in any real deployment. Admin keys
+are listed separately in `AdminApiKeys`.
 
 ## API
 
 All `/api` endpoints and `/admin/reconcile` require an `X-Api-Key` header. The
-API key identifies the client, and a client owns its wallets. Mutating endpoints
-also require `Idempotency-Key`. Replaying a key returns the original response
-with `Idempotent-Replayed: true`; reusing a key with a different payload returns
-`422`.
+API key identifies the client, and a client owns its wallets. `/admin/reconcile`
+additionally requires a key registered in `AdminApiKeys`. Mutating `/api`
+endpoints also require `Idempotency-Key`. Replaying a key returns the original
+response with `Idempotent-Replayed: true`; reusing a key with a different
+payload returns `422`.
 
 ### Create a wallet
 
@@ -101,8 +105,12 @@ curl http://localhost:5158/api/wallets/{id}/entries?limit=50 \
 - `/metrics` — Prometheus metrics (outbox lag, outbox backlog, invariant violations, transfer rate, rate-limit rejections)
 - `/health` — liveness
 - `/health/deep` — database, broker, and Redis connectivity
-- `/admin/reconcile` — runs the ledger invariant queries and reports violations (API key required)
+- `/admin/reconcile` — runs the ledger invariant queries and reports violations (admin API key required)
 - Grafana dashboard at http://localhost:3000
+
+```bash
+curl http://localhost:5158/admin/reconcile -H "X-Api-Key: dev-admin-key"
+```
 
 ## Testing
 
@@ -124,15 +132,23 @@ k6 run \
 ```
 
 The setup phase creates one wallet per client, and each client may only own one
-wallet per currency, so start from a clean database before each run.
+wallet per currency, so start from a clean database before each run. This script
+is a deliberate hot-pair worst-case: every VU contends on the same two wallets.
+The one-wallet-per-client-per-currency rule means spreading load would require
+many configured clients, not many wallets per client.
 
 ## Known limitations
 
 - **Authentication is config-based.** API keys are read from configuration and
-  mapping is key → client. There is no key expiry, rotation endpoint, or role
-  model yet.
+  mapping is key → client. There is no key expiry or rotation endpoint; the only
+  role is `admin`.
 - A client owns at most one wallet per currency.
 - Reversals are full and cannot be reversed again; no partial reversals.
 - Single currency per transfer; no fees or conversion.
-- A single relay instance preserves outbox ordering; scaling it trades away ordering.
+- Consumer retries use one fixed 30-second delay, not exponential backoff.
+- Rate limiting runs after authentication, so unauthenticated API-key guessing is
+  not throttled.
+- A single relay instance preserves outbox ordering by stopping the batch at the
+  first failed publish. A permanently unroutable event therefore blocks later
+  events until it is fixed.
 - Idempotency of business errors is not cached (a retry after a failed deposit re-evaluates).

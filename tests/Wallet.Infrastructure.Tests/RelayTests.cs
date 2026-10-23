@@ -214,6 +214,31 @@ public class RelayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Relay_UnroutableEvent_StopsLaterEventsToPreserveOrder()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+
+        var first = await _service.ExecuteAsync(
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
+        var second = await _service.ExecuteAsync(
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 20, alice.OwnerId!);
+
+        await _db.OutboxEvents
+            .Where(e => e.TransferId == first.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.Type, "unbound.event"));
+
+        var relay = CreateRelay(_connectionProvider);
+        await relay.InitializeAsync();
+        await relay.PollAndPublishAsync(CancellationToken.None);
+
+        var firstEvent = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == first.Id);
+        var secondEvent = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == second.Id);
+
+        firstEvent.PublishedAt.Should().BeNull("the unroutable event must stay unpublished");
+        secondEvent.PublishedAt.Should().BeNull("later events must not overtake a failed event");
+    }
+
+    [Fact]
     public async Task TopologySetup_CreatesExpectedQueues()
     {
         RabbitMqTopology.DeclareTopology(_channel);

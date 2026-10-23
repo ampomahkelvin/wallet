@@ -97,13 +97,18 @@ public class RecordingRateLimiter : IRateLimiter
 public class TestApiKeyProvider : IApiKeyProvider
 {
     private readonly ConcurrentDictionary<string, string> _keys = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _adminKeys = new(StringComparer.Ordinal);
 
-    public string CreateKey(string clientId)
+    public string CreateKey(string clientId, bool admin = false)
     {
         var key = $"test-key-{Guid.NewGuid():N}";
         _keys[key] = clientId;
+        if (admin)
+            _adminKeys[key] = 0;
         return key;
     }
+
+    public string CreateAdminKey(string clientId = "admin") => CreateKey(clientId, admin: true);
 
     public bool TryGetClientId(string apiKey, out string clientId)
     {
@@ -116,4 +121,6 @@ public class TestApiKeyProvider : IApiKeyProvider
         clientId = null!;
         return false;
     }
+
+    public bool IsAdmin(string apiKey) => _adminKeys.ContainsKey(apiKey);
 }

@@ -3,6 +3,7 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 import { randomIntBetween } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
 
+// Worst-case hot-pair benchmark: every iteration contends on the same two wallets.
 const errorRate = new Rate('errors');
 const transferDuration = new Trend('transfer_duration');
 

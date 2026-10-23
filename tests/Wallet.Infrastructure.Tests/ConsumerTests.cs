@@ -65,7 +65,7 @@ public class ConsumerTests : IAsyncLifetime
             NullLogger<RabbitMqConnectionProvider>.Instance);
         var connection = await _connectionProvider.GetConnectionAsync();
         _channel = connection.CreateModel();
-        RabbitMqTopology.DeclareTopology(_channel);
+        RabbitMqTopology.DeclareTopology(_channel, TimeSpan.FromMilliseconds(500));
     }
 
     public async Task DisposeAsync()
@@ -102,7 +102,8 @@ public class ConsumerTests : IAsyncLifetime
             new TestServiceProvider(new DbContextFactoryWrapper(_postgres.GetConnectionString())),
             _connectionProvider,
             dispatcher,
-            Options.Create(new ConsumerOptions { MaxRetryCount = maxRetryCount, PrefetchCount = 10 }));
+            Options.Create(new ConsumerOptions { MaxRetryCount = maxRetryCount, PrefetchCount = 10 }),
+            TimeSpan.FromMilliseconds(500));
 
     private void PublishEvent(long eventId, string eventType, string payload, int retryCount = 0)
     {
@@ -212,6 +213,36 @@ public class ConsumerTests : IAsyncLifetime
 
         var processed = await WaitForConditionAsync(() => Task.FromResult(_processedEvents.Count == 3), TimeSpan.FromSeconds(10));
         processed.Should().BeTrue();
+
+        await consumer.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ConsumerService_TransientFailure_RetriesAndProcessesOnce()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+        var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
+
+        var attempts = 0;
+        var consumer = CreateConsumer(CreateDispatcher("transfer.completed", _ =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+                throw new InvalidOperationException("transient failure");
+
+            return Task.CompletedTask;
+        }));
+        await consumer.StartAsync(CancellationToken.None);
+
+        PublishEvent(evt.Id, "transfer.completed", evt.Payload);
+
+        var processed = await WaitForConditionAsync(async () =>
+            await _db.ConsumerProcessedEvents.AnyAsync(e => e.EventId == evt.Id && e.ConsumerName == "wallet-consumer"),
+            TimeSpan.FromSeconds(15));
+        processed.Should().BeTrue("the retried event should eventually be processed");
+
+        attempts.Should().Be(2);
+        (await _db.ConsumerProcessedEvents.CountAsync(e => e.EventId == evt.Id)).Should().Be(1);
 
         await consumer.StopAsync(CancellationToken.None);
     }

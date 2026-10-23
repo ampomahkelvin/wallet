@@ -11,12 +11,13 @@ public static class RabbitMqTopology
     public const string RetryQueueName = "wallet.events.retry";
     public const string DlqName = "wallet.events.dlq";
 
-    public const string RetryRoutingKeyPrefix = "retry.";
     public const string RetryCountHeader = "x-retry-count";
     public const string OriginalTypeHeader = "x-original-type";
 
-    public static void DeclareTopology(IModel channel)
+    public static void DeclareTopology(IModel channel, TimeSpan? retryDelay = null)
     {
+        var retryTtlMs = (int)(retryDelay ?? TimeSpan.FromSeconds(30)).TotalMilliseconds;
+
         channel.ExchangeDeclare(ExchangeName, ExchangeType.Topic, durable: true);
         channel.ExchangeDeclare(RetryExchangeName, ExchangeType.Topic, durable: true);
         channel.ExchangeDeclare(DlxName, ExchangeType.Topic, durable: true);
@@ -30,19 +31,17 @@ public static class RabbitMqTopology
             arguments: new Dictionary<string, object?>
             {
                 { "x-dead-letter-exchange", ExchangeName },
-                { "x-message-ttl", 30000 }
+                { "x-message-ttl", retryTtlMs }
             });
-        channel.QueueBind(RetryQueueName, RetryExchangeName, "retry.*");
+        channel.QueueBind(RetryQueueName, RetryExchangeName, "#");
 
         channel.QueueDeclare(MainQueueName, durable: true, exclusive: false, autoDelete: false,
             arguments: new Dictionary<string, object?>
             {
-                { "x-dead-letter-exchange", DlxName },
-                { "x-dead-letter-routing-key", "transfer.completed" }
+                { "x-dead-letter-exchange", DlxName }
             });
         channel.QueueBind(MainQueueName, ExchangeName, "transfer.*");
         channel.QueueBind(MainQueueName, ExchangeName, "deposit.*");
         channel.QueueBind(MainQueueName, ExchangeName, "withdrawal.*");
-        channel.QueueBind(MainQueueName, ExchangeName, "retry.*");
     }
 }
