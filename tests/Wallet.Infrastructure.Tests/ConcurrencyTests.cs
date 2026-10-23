@@ -63,7 +63,7 @@ public class ConcurrencyTests : IAsyncLifetime
         foreach (var w in wallets)
         {
             var systemWallet = await _db.Wallets.FirstAsync(x => x.Kind == WalletKind.System);
-            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 1000);
+            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 1000, w.OwnerId!);
         }
 
         var initialTotal = 5000L;
@@ -78,7 +78,7 @@ public class ConcurrencyTests : IAsyncLifetime
                 wallets[fromIdx].Id,
                 wallets[toIdx].Id,
                 "GHS",
-                10));
+                10, wallets[fromIdx].OwnerId!));
         }
 
         await Task.WhenAll(tasks);
@@ -99,13 +99,13 @@ public class ConcurrencyTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 100000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 100000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 100000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 100000, bob.OwnerId!);
 
         for (var i = 0; i < 200; i++)
         {
-            var task1 = _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
-            var task2 = _service.ExecuteAsync(TransferType.Transfer, bob.Id, alice.Id, "GHS", 10);
+            var task1 = _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
+            var task2 = _service.ExecuteAsync(TransferType.Transfer, bob.Id, alice.Id, "GHS", 10, bob.OwnerId!);
 
             await Task.WhenAll(task1, task2);
         }
@@ -126,15 +126,15 @@ public class ConcurrencyTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         var transferCountBefore = await _db.Transfers.CountAsync();
 
         var tasks = new List<Task<Transfer>>();
         for (int i = 0; i < 50; i++)
         {
-            tasks.Add(_service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10));
+            tasks.Add(_service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!));
         }
 
         await Task.WhenAll(tasks);
@@ -158,7 +158,7 @@ public class ConcurrencyTests : IAsyncLifetime
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
         foreach (var w in wallets)
         {
-            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 500);
+            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 500, w.OwnerId!);
         }
 
         var tasks = new List<Task>();
@@ -171,7 +171,7 @@ public class ConcurrencyTests : IAsyncLifetime
                 wallets[fromIdx].Id,
                 wallets[toIdx].Id,
                 "GHS",
-                25));
+                25, wallets[fromIdx].OwnerId!));
         }
 
         await Task.WhenAll(tasks);
@@ -205,7 +205,7 @@ public class ConcurrencyTests : IAsyncLifetime
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
         foreach (var w in wallets)
         {
-            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 500);
+            await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, w.Id, "GHS", 500, w.OwnerId!);
         }
 
         var tasks = new List<Task>();
@@ -218,7 +218,7 @@ public class ConcurrencyTests : IAsyncLifetime
                 wallets[fromIdx].Id,
                 wallets[toIdx].Id,
                 "GHS",
-                25));
+                25, wallets[fromIdx].OwnerId!));
         }
 
         await Task.WhenAll(tasks);

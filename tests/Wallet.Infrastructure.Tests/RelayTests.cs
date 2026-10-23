@@ -85,8 +85,8 @@ public class RelayTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         return (alice, bob);
     }
@@ -97,7 +97,7 @@ public class RelayTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connectionProvider,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
@@ -120,7 +120,7 @@ public class RelayTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         await _db.OutboxEvents.Where(e => e.TransferId == transfer.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.PublishedAt, DateTimeOffset.UtcNow));
@@ -144,9 +144,9 @@ public class RelayTests : IAsyncLifetime
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
 
-        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
-        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
-        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
+        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
 
         var relay = new RelayService(_logger, new ScopeFactoryWrapper(_postgres.GetConnectionString()), _connectionProvider,
             Options.Create(new RelayOptions { PollIntervalMs = 100, BatchSize = 100 }));
@@ -173,7 +173,7 @@ public class RelayTests : IAsyncLifetime
         await relay.PollAndPublishAsync(CancellationToken.None);
         (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(0);
 
-        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(1);
 
         await _rabbitmq.StopAsync();
@@ -189,6 +189,28 @@ public class RelayTests : IAsyncLifetime
         await restartedRelay.PollAndPublishAsync(CancellationToken.None);
 
         (await _db.OutboxEvents.CountAsync(e => e.PublishedAt == null)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Relay_UnroutableEvent_LeavesEventUnpublished()
+    {
+        var (alice, bob) = await CreateFundedWalletsAsync();
+
+        var transfer = await _service.ExecuteAsync(
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+
+        await _db.OutboxEvents
+            .Where(e => e.TransferId == transfer.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.Type, "unbound.event"));
+
+        var relay = CreateRelay(_connectionProvider);
+        await relay.InitializeAsync();
+        await relay.PollAndPublishAsync(CancellationToken.None);
+
+        await Task.Delay(200);
+
+        var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
+        evt.PublishedAt.Should().BeNull("unroutable messages must not be marked as published");
     }
 
     [Fact]

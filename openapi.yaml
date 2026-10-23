@@ -5,16 +5,13 @@ info:
   description: Double-entry payments ledger with idempotent writes and transactional outbox
 servers:
   - url: http://localhost:5158
+security:
+  - ApiKeyAuth: []
 paths:
   /api/wallets:
     post:
       summary: Create a wallet
       parameters:
-        - name: X-Client-Id
-          in: header
-          required: true
-          schema:
-            type: string
         - name: Idempotency-Key
           in: header
           required: true
@@ -26,10 +23,8 @@ paths:
           application/json:
             schema:
               type: object
-              required: [ownerId, currency]
+              required: [currency]
               properties:
-                ownerId:
-                  type: string
                 currency:
                   type: string
                   pattern: '^[A-Z]{3}$'
@@ -69,11 +64,6 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: X-Client-Id
-          in: header
-          required: true
-          schema:
-            type: string
         - name: Idempotency-Key
           in: header
           required: true
@@ -107,11 +97,6 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: X-Client-Id
-          in: header
-          required: true
-          schema:
-            type: string
         - name: Idempotency-Key
           in: header
           required: true
@@ -166,11 +151,6 @@ paths:
     post:
       summary: Create a transfer
       parameters:
-        - name: X-Client-Id
-          in: header
-          required: true
-          schema:
-            type: string
         - name: Idempotency-Key
           in: header
           required: true
@@ -232,11 +212,6 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: X-Client-Id
-          in: header
-          required: true
-          schema:
-            type: string
         - name: Idempotency-Key
           in: header
           required: true
@@ -252,16 +227,23 @@ paths:
   /health:
     get:
       summary: Health check
+      security: []
       responses:
         '200':
           description: Service is healthy
   /health/deep:
     get:
       summary: Deep health check
+      security: []
       responses:
         '200':
           description: Service health details
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
   schemas:
     Wallet:
       type: object

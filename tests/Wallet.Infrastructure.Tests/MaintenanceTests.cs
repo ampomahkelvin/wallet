@@ -83,8 +83,8 @@ public class MaintenanceTests : IAsyncLifetime
         var service = new Wallet.Infrastructure.Transfers.TransferService(
             new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
-        var transfer = await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 1000);
-        var secondTransfer = await service.ExecuteAsync(TransferType.Transfer, wallet.Id, wallet2.Id, "GHS", 100);
+        var transfer = await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 1000, wallet.OwnerId!);
+        var secondTransfer = await service.ExecuteAsync(TransferType.Transfer, wallet.Id, wallet2.Id, "GHS", 100, wallet.OwnerId!);
 
         await _db.Database.ExecuteSqlInterpolatedAsync($@"
             INSERT INTO outbox_events (""TransferId"", ""Type"", ""Payload"", ""CreatedAt"", ""PublishedAt"")
@@ -122,7 +122,7 @@ public class MaintenanceTests : IAsyncLifetime
         var service = new Wallet.Infrastructure.Transfers.TransferService(
             new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
-        await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 500);
+        await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 500, wallet.OwnerId!);
 
         var walletsWithBalance = await _db.Wallets
             .Where(w => w.Kind == WalletKind.User)
@@ -149,7 +149,7 @@ public class MaintenanceTests : IAsyncLifetime
             new DbContextFactoryWrapper(_postgres.GetConnectionString()));
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 500);
+        await service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, wallet.Id, "GHS", 500, wallet.OwnerId!);
 
         var totalSum = await _db.LedgerEntries.SumAsync(e => e.Amount);
         totalSum.Should().Be(0);

@@ -11,6 +11,7 @@ public interface ITransferService
         Guid destinationWalletId,
         string currency,
         long amount,
+        string clientId,
         Guid? reversesTransferId = null,
         CancellationToken ct = default);
 
@@ -21,14 +22,15 @@ public interface ITransferService
         Guid destinationWalletId,
         string currency,
         long amount,
+        string clientId,
         Guid? reversesTransferId = null,
         CancellationToken ct = default);
 
     Task<Transfer?> GetAsync(Guid id, CancellationToken ct = default);
 
-    Task<Transfer> ReverseAsync(Guid transferId, CancellationToken ct = default);
+    Task<Transfer> ReverseAsync(Guid transferId, string clientId, CancellationToken ct = default);
 
-    Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, CancellationToken ct = default);
+    Task<Transfer> ReverseInTransactionAsync(WalletDbContext db, Guid transferId, string clientId, CancellationToken ct = default);
 
     Task<IReadOnlyList<LedgerEntry>> GetWalletEntriesAsync(
         Guid walletId,

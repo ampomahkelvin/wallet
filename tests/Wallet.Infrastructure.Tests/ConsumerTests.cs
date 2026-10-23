@@ -83,8 +83,8 @@ public class ConsumerTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         return (alice, bob);
     }
@@ -121,7 +121,7 @@ public class ConsumerTests : IAsyncLifetime
     public async Task ConsumerService_NewEvent_RecordsInProcessedEvents()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
-        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
         var consumer = CreateConsumer(CreateDispatcher("transfer.completed", _ => Task.CompletedTask));
@@ -141,7 +141,7 @@ public class ConsumerTests : IAsyncLifetime
     public async Task ConsumerService_DuplicateEvent_ProcessesOnce()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
-        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
         var consumer = CreateConsumer(CreateDispatcher("transfer.completed", async payload =>
@@ -168,7 +168,7 @@ public class ConsumerTests : IAsyncLifetime
     public async Task ConsumerService_UnknownEventType_AcksWithoutProcessing()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
-        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
         var consumer = CreateConsumer(CreateDispatcher("transfer.completed", async payload =>
@@ -191,9 +191,9 @@ public class ConsumerTests : IAsyncLifetime
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
 
-        var t1 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10);
-        var t2 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 20);
-        var t3 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 30);
+        var t1 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 10, alice.OwnerId!);
+        var t2 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 20, alice.OwnerId!);
+        var t3 = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 30, alice.OwnerId!);
 
         var e1 = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == t1.Id);
         var e2 = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == t2.Id);
@@ -220,7 +220,7 @@ public class ConsumerTests : IAsyncLifetime
     public async Task ConsumerService_PoisonMessage_GoesToDlq()
     {
         var (alice, bob) = await CreateFundedWalletsAsync();
-        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+        var transfer = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         var evt = await _db.OutboxEvents.AsNoTracking().FirstAsync(e => e.TransferId == transfer.Id);
 
         var consumer = CreateConsumer(CreateDispatcher("transfer.completed", _ => throw new InvalidOperationException("poison")));

@@ -1,11 +1,7 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Wallet.Infrastructure.Persistence;
 using Xunit;
 
@@ -13,50 +9,45 @@ namespace Wallet.Api.Tests;
 
 public class IdempotencyApiTests : IClassFixture<WalletApiFactory>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     private readonly WalletApiFactory _factory;
-    private readonly HttpClient _client;
+    private readonly ApiTestClient _api;
 
     public IdempotencyApiTests(WalletApiFactory factory)
     {
         _factory = factory;
-        _client = factory.CreateClient();
+        _api = new ApiTestClient(factory);
     }
 
     [Fact]
     public async Task PostWallet_SameKeyTwice_ReplaysAndCreatesOneWallet()
     {
+        var clientId = ApiTestClient.NewClientId("user");
+        var apiKey = _api.CreateKey(clientId);
         var key = Guid.NewGuid().ToString();
-        var payload = new { ownerId = "user-1", currency = "GHS" };
+        var payload = new { currency = "GHS" };
 
-        var first = await PostJson("/api/wallets", payload, key);
+        var first = await _api.PostJsonAsync("/api/wallets", payload, apiKey, key);
         first.StatusCode.Should().Be(HttpStatusCode.Created);
         first.Headers.Contains("Idempotent-Replayed").Should().BeFalse();
-        var firstBody = await first.Content.ReadFromJsonAsync<WalletDto>(JsonOptions);
+        var firstBody = await first.Content.ReadFromJsonAsync<ApiTestClient.WalletDto>(ApiTestClient.JsonOptions);
 
-        var second = await PostJson("/api/wallets", payload, key);
+        var second = await _api.PostJsonAsync("/api/wallets", payload, apiKey, key);
         second.StatusCode.Should().Be(HttpStatusCode.Created);
         second.Headers.Should().Contain(h => h.Key.Equals("Idempotent-Replayed", StringComparison.OrdinalIgnoreCase));
-        var secondBody = await second.Content.ReadFromJsonAsync<WalletDto>(JsonOptions);
+        var secondBody = await second.Content.ReadFromJsonAsync<ApiTestClient.WalletDto>(ApiTestClient.JsonOptions);
 
         secondBody!.Id.Should().Be(firstBody!.Id);
+        secondBody.OwnerId.Should().Be(clientId);
 
         using var db = _factory.CreateDbContext();
-        (await db.Wallets.CountAsync(w => w.OwnerId == "user-1" && w.Currency == "GHS")).Should().Be(1);
+        (await db.Wallets.CountAsync(w => w.OwnerId == clientId && w.Currency == "GHS")).Should().Be(1);
     }
 
     [Fact]
     public async Task PostTransfer_50ParallelSameKey_CreatesOneTransferAndOneEvent()
     {
-        var alice = await CreateWallet("alice");
-        var bob = await CreateWallet("bob");
-        await DepositAsync(alice, 10000);
-        await DepositAsync(bob, 10000);
+        var (alice, aliceClientId, aliceKey) = await CreateFundedWalletAsync("alice");
+        var (bob, _, _) = await CreateFundedWalletAsync("bob");
 
         var key = Guid.NewGuid().ToString();
         var payload = new
@@ -68,75 +59,82 @@ public class IdempotencyApiTests : IClassFixture<WalletApiFactory>
         };
 
         var responses = await Task.WhenAll(Enumerable.Range(0, 50)
-            .Select(_ => PostJson("/api/transfers", payload, key)));
+            .Select(_ => _api.PostJsonAsync("/api/transfers", payload, aliceKey, key)));
 
         responses.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
 
         var ids = await Task.WhenAll(responses
-            .Select(r => r.Content.ReadFromJsonAsync<TransferDto>(JsonOptions)));
+            .Select(r => r.Content.ReadFromJsonAsync<ApiTestClient.TransferDto>(ApiTestClient.JsonOptions)));
         ids.Select(t => t!.Id).Distinct().Should().HaveCount(1);
+        var transferId = ids[0]!.Id;
 
         using var db = _factory.CreateDbContext();
-        (await db.Transfers.CountAsync()).Should().Be(3);
-        (await db.OutboxEvents.CountAsync()).Should().Be(3);
+        (await db.IdempotencyKeys.CountAsync(k => k.ClientId == aliceClientId && k.Key == key)).Should().Be(1);
+        (await db.Transfers.CountAsync(t => t.Id == transferId)).Should().Be(1);
+        (await db.OutboxEvents.CountAsync(e => e.TransferId == transferId)).Should().Be(1);
     }
 
     [Fact]
     public async Task PostTransfer_SameKeyDifferentPayload_Returns422()
     {
-        var alice = await CreateWallet("alice");
-        var bob = await CreateWallet("bob");
-        await DepositAsync(alice, 10000);
-        await DepositAsync(bob, 10000);
+        var (alice, _, aliceKey) = await CreateFundedWalletAsync("alice");
+        var (bob, _, _) = await CreateFundedWalletAsync("bob");
 
         var key = Guid.NewGuid().ToString();
 
-        var first = await PostJson("/api/transfers", new
+        var first = await _api.PostJsonAsync("/api/transfers", new
         {
             sourceWalletId = alice,
             destinationWalletId = bob,
             currency = "GHS",
             amount = 100
-        }, key);
+        }, aliceKey, key);
         first.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var second = await PostJson("/api/transfers", new
+        var second = await _api.PostJsonAsync("/api/transfers", new
         {
             sourceWalletId = alice,
             destinationWalletId = bob,
             currency = "GHS",
             amount = 200
-        }, key);
+        }, aliceKey, key);
         second.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
     [Fact]
     public async Task PostWallet_MissingIdempotencyKey_Returns400()
     {
-        var response = await _client.PostAsJsonAsync("/api/wallets", new { ownerId = "u", currency = "GHS" });
+        var apiKey = _api.CreateKey(ApiTestClient.NewClientId("missing-key"));
+        var response = await _api.PostJsonAsync(
+            "/api/wallets",
+            new { currency = "GHS" },
+            apiKey,
+            idempotencyKey: null);
+
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
     public async Task GetWallet_Unknown_Returns404()
     {
-        var response = await _client.GetAsync($"/api/wallets/{Guid.NewGuid()}");
+        var apiKey = _api.CreateKey(ApiTestClient.NewClientId("unknown"));
+        var response = await _api.GetAsync($"/api/wallets/{Guid.NewGuid()}", apiKey);
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
     public async Task PostTransfer_InsufficientFunds_Returns409()
     {
-        var alice = await CreateWallet("alice");
-        var bob = await CreateWallet("bob");
+        var (alice, _, aliceKey) = await CreateWalletAsync("alice");
+        var (bob, _, _) = await CreateWalletAsync("bob");
 
-        var response = await PostJson("/api/transfers", new
+        var response = await _api.PostJsonAsync("/api/transfers", new
         {
             sourceWalletId = alice,
             destinationWalletId = bob,
             currency = "GHS",
             amount = 100
-        }, Guid.NewGuid().ToString());
+        }, aliceKey, Guid.NewGuid().ToString());
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
@@ -144,43 +142,18 @@ public class IdempotencyApiTests : IClassFixture<WalletApiFactory>
     [Fact]
     public async Task GetEntries_LimitTooLarge_Returns422()
     {
-        var wallet = await CreateWallet("entries-user");
-        var response = await _client.GetAsync($"/api/wallets/{wallet}/entries?limit=500");
+        var (wallet, _, apiKey) = await CreateWalletAsync("entries-user");
+        var response = await _api.GetAsync($"/api/wallets/{wallet}/entries?limit=500", apiKey);
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
-    private async Task<Guid> CreateWallet(string ownerId)
+    private Task<(Guid WalletId, string ClientId, string ApiKey)> CreateWalletAsync(string prefix)
+        => _api.CreateWalletAsync(prefix);
+
+    private async Task<(Guid WalletId, string ClientId, string ApiKey)> CreateFundedWalletAsync(string prefix)
     {
-        var uniqueOwner = $"{ownerId}-{Guid.NewGuid():N}";
-        var response = await PostJson("/api/wallets", new { ownerId = uniqueOwner, currency = "GHS" }, Guid.NewGuid().ToString());
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var body = await response.Content.ReadFromJsonAsync<WalletDto>(JsonOptions);
-        return body!.Id;
+        var wallet = await CreateWalletAsync(prefix);
+        await _api.DepositAsync(wallet.WalletId, 10000, wallet.ApiKey);
+        return wallet;
     }
-
-    private async Task DepositAsync(Guid walletId, long amount)
-    {
-        var response = await PostJson($"/api/wallets/{walletId}/deposits", new { amount }, Guid.NewGuid().ToString());
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
-    private Task<HttpResponseMessage> PostJson(string url, object payload, string idempotencyKey)
-    {
-        var content = JsonContent.Create(payload, options: JsonOptions);
-        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
-        request.Headers.Add("X-Client-Id", "api-test");
-        request.Headers.Add("Idempotency-Key", idempotencyKey);
-        return _client.SendAsync(request);
-    }
-
-    private sealed record WalletDto(Guid Id, string OwnerId, string Currency, long Balance);
-
-    private sealed record TransferDto(
-        Guid Id,
-        string Type,
-        Guid SourceWalletId,
-        Guid DestinationWalletId,
-        string Currency,
-        long Amount,
-        DateTimeOffset CreatedAt);
 }

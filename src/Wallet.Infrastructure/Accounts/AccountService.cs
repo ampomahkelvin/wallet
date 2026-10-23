@@ -29,8 +29,16 @@ public class AccountService(IDbContextFactory<WalletDbContext> contextFactory) :
         return await db.Wallets.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct);
     }
 
-    public async Task<Wallet.Domain.Wallet?> GetAsync(WalletDbContext db, Guid id, CancellationToken ct)
-        => await db.Wallets.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct);
+    public async Task<Wallet.Domain.Wallet?> GetAsync(Guid id, string clientId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Wallets.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == id && w.Kind == WalletKind.User && w.OwnerId == clientId, ct);
+    }
+
+    public async Task<Wallet.Domain.Wallet?> GetAsync(WalletDbContext db, Guid id, string clientId, CancellationToken ct)
+        => await db.Wallets.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == id && w.Kind == WalletKind.User && w.OwnerId == clientId, ct);
 
     public async Task<Wallet.Domain.Wallet?> GetSystemWalletAsync(string currency, CancellationToken ct)
     {

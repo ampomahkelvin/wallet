@@ -9,3 +9,9 @@ public class InsufficientFundsException(string message) : DomainException(messag
 public class IdempotencyKeyReusedException(string message) : DomainException(message);
 
 public class ValidationException(string message) : DomainException(message);
+
+public class BadRequestException(string message) : DomainException(message);
+
+public class ForbiddenException(string message) : DomainException(message);
+
+public class UnauthorizedException(string message) : DomainException(message);

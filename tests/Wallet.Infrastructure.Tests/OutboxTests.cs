@@ -58,8 +58,8 @@ public class OutboxTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, bob.Id, "GHS", 1000, bob.OwnerId!);
 
         return (alice, bob);
     }
@@ -70,7 +70,7 @@ public class OutboxTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         var outboxEvent = await _db.OutboxEvents
             .AsNoTracking()
@@ -95,7 +95,7 @@ public class OutboxTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         var systemWallet = await _db.Wallets.FirstAsync(w => w.Kind == WalletKind.System);
-        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000);
+        await _service.ExecuteAsync(TransferType.Deposit, systemWallet.Id, alice.Id, "GHS", 1000, alice.OwnerId!);
 
         var transferCountBefore = await _db.Transfers.CountAsync();
         var outboxCountBefore = await _db.OutboxEvents.CountAsync();
@@ -123,8 +123,8 @@ public class OutboxTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-        var reversal = await _service.ReverseAsync(transfer.Id);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+        var reversal = await _service.ReverseAsync(transfer.Id, bob.OwnerId!);
 
         var outboxEvent = await _db.OutboxEvents
             .AsNoTracking()
@@ -145,16 +145,16 @@ public class OutboxTests : IAsyncLifetime
 
         Transfer transfer;
         if (type == TransferType.Deposit)
-            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100);
+            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         else if (type == TransferType.Withdrawal)
-            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100);
+            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
         else if (type == TransferType.Reversal)
         {
-            var original = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
-            transfer = await _service.ReverseAsync(original.Id);
+            var original = await _service.ExecuteAsync(TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
+            transfer = await _service.ReverseAsync(original.Id, bob.OwnerId!);
         }
         else
-            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100);
+            transfer = await _service.ExecuteAsync(type, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         var outboxEvent = await _db.OutboxEvents
             .AsNoTracking()
@@ -170,7 +170,7 @@ public class OutboxTests : IAsyncLifetime
         var (alice, bob) = await CreateFundedWalletsAsync();
 
         var transfer = await _service.ExecuteAsync(
-            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100);
+            TransferType.Transfer, alice.Id, bob.Id, "GHS", 100, alice.OwnerId!);
 
         var events = await _db.OutboxEvents
             .AsNoTracking()

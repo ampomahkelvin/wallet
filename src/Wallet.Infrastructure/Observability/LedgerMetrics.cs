@@ -20,11 +20,11 @@ public static class LedgerMetrics
         "wallet_invariant_violations",
         "Number of wallets whose cached balance disagrees with its ledger entries");
 
-    public static readonly Gauge RateLimiterRejections = Metrics.CreateGauge(
+    public static readonly Counter RateLimiterRejections = Metrics.CreateCounter(
         "wallet_rate_limit_rejections_total",
         "Total number of requests rejected by the rate limiter");
 
-    public static readonly Gauge RateLimiterFailOpen = Metrics.CreateGauge(
+    public static readonly Counter RateLimiterFailOpen = Metrics.CreateCounter(
         "wallet_rate_limiter_fail_open_total",
         "Total number of times the rate limiter failed open");
 }
